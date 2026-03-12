@@ -1,0 +1,7 @@
+black
+flake8
+mkdocs
+mkdocs-material
+mkdocs-mermaid2-plugin
+pre-commit
+pytest

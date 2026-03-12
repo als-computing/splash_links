@@ -1,0 +1,39 @@
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Distribution / packaging
+*.egg-info/
+build/
+dist/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+
+# Docker / Git / CI
+Dockerfile.*
+.dockerignore
+.git
+.gitignore
+.github/
+.idea/
+.vscode/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+
+# Tests (optional)
+tests/
+
+# Secret keys or env files (if not required in build)
+.env
+.secrets

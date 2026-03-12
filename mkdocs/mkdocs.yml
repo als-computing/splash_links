@@ -1,0 +1,30 @@
+# Project Information
+site_name: ALS Computing MkDocs Template
+site_description: ALS Computing MkDocs Template
+site_author: ALS Computing
+site_url: "https://als-computing.github.io/project_template/"
+repo_name: project_template
+repo_url: https://github.com/als-computing/project_template
+edit_uri: blob/main/docs/
+
+# Navigation
+nav:
+- Home: index.md
+- About: about.md
+- Test: test.md
+
+# Theme and Plugins
+theme:
+  name: material
+  custom_dir: overrides
+extra_css:
+- assets/als_style.css
+extra:
+  favicon: overrides/assets/images/favicon.png
+  social:
+  - icon: fontawesome/brands/github
+    link: https://github.com/als-computing
+
+plugins:
+- mermaid2
+- search

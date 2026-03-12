@@ -1,0 +1,62 @@
+# .pre-commit-config.yaml
+# This file defines pre-commit hooks for ensuring code quality
+# across formatting, linting, and static analysis.
+
+repos:
+# Format Python code using Black.
+- repo: https://github.com/psf/black
+  # rev: "23.1.0" # Pin to a stable Black release.
+  hooks:
+  - id: black
+    name: Black Formatter
+    language_version: python3
+
+# Sort Python imports using isort.
+- repo: https://github.com/PyCQA/isort
+  # rev: "5.12.0" # Use the latest stable release.
+  hooks:
+  - id: isort
+    name: isort (import sorter)
+    language_version: python3
+
+# Lint Python code using flake8.
+- repo: https://github.com/PyCQA/flake8
+  # rev: "6.0.0" # Pin flake8 to a known stable version.
+  hooks:
+  - id: flake8
+    name: flake8 Linter
+    language_version: python3
+    additional_dependencies:
+    - flake8-bugbear # Extra bug detection.
+    - flake8-import-order # Enforce import ordering.
+
+# Check for common issues in text files.
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  # rev: "v4.4.0" # Stable release for common hooks.
+  hooks:
+  - id: trailing-whitespace # Remove trailing whitespace.
+  - id: end-of-file-fixer # Ensure files end with a newline.
+  - id: check-yaml # Validate YAML syntax.
+  - id: check-added-large-files # Prevent accidentally adding large files.
+
+# Perform static type checking using mypy.
+- repo: https://github.com/pre-commit/mirrors-mypy
+  # rev: "v1.5.1" # Use the mirrored mypy hook.
+  hooks:
+  - id: mypy
+    name: mypy (static type checker)
+    language_version: python3
+
+# Validate YAML files using yamllint.
+- repo: https://github.com/adrienverge/yamllint.git
+  # rev: "v1.26.3" # Use a pinned revision for consistency.
+  hooks:
+  - id: yamllint
+    name: yamllint (YAML linter)
+
+# Optionally, validate Markdown files.
+- repo: https://github.com/igorshubovych/markdownlint-cli
+  # rev: "0.32.2"
+  hooks:
+  - id: markdownlint
+    name: markdownlint (Markdown linter)
