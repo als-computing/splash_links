@@ -8,6 +8,9 @@
 # Mac/OSX
 .DS_Store
 
+# pixi – commit pixi.lock but not the installed env
+.pixi/
+
 # Windows
 Thumbs.db
 
@@ -137,3 +140,6 @@ clientid.txt
 priv_key.jwk
 priv_key.pem
 sfapi_training.json
+
+.ruff_cache/
+*.duckdb

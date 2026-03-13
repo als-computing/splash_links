@@ -1,7 +1,7 @@
-black
-flake8
-mkdocs
-mkdocs-material
-mkdocs-mermaid2-plugin
-pre-commit
-pytest
+# Dependencies are managed by pixi.
+# See pixi.toml (environment + tasks) and pyproject.toml (package metadata + runtime deps).
+#
+# Quick start:
+#   pixi install       # resolve and install the environment
+#   pixi run test      # run tests
+#   pixi run serve     # start the dev server

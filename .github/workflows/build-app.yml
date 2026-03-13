@@ -1,4 +1,4 @@
-name: project template
+name: CI
 
 on:
   push:
@@ -12,29 +12,23 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v5
+
+    - name: Set up pixi
+      uses: prefix-dev/setup-pixi@v0.8.1
       with:
-        python-version: 3.11
-        cache: 'pip'
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-        if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-    - name: Format with Black
-      run: black .
-    - name: Lint with flake8
-      run: |
-        # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-    - name: Test with pytest
-      run: pytest
+        pixi-version: v0.63.2
+        cache: true
+
+    - name: Lint
+      run: pixi run lint
+
+    - name: Test (≥90% coverage required)
+      run: pixi run test
+
     - name: Build MkDocs site
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      run: mkdocs gh-deploy --force -f mkdocs/mkdocs.yml
+      run: pixi run docs build -f mkdocs/mkdocs.yml
+
     - name: Update Readme Tree
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      run: python scripts/update_readme_tree.py
+      run: pixi run python scripts/update_readme_tree.py

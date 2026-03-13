@@ -1,0 +1,47 @@
+[workspace]
+name = "splash-links"
+version = "0.1.0"
+description = "Entity link graph service backed by DuckDB and served over GraphQL"
+channels = ["https://prefix.dev/conda-forge"]
+platforms = ["linux-64", "osx-arm64", "osx-64"]
+
+[dependencies]
+python = ">=3.11,<3.13"
+pytz = "*"
+pip = "*"
+
+[pypi-dependencies]
+# Install the local package (and its runtime deps from pyproject.toml) as editable.
+splash-links = { path = ".", editable = true }
+
+# Test / dev
+httpx = "*"
+pytest = "*"
+pytest-cov = "*"
+ruff = "*"
+pre-commit = "*"
+
+# Docs
+mkdocs = "*"
+mkdocs-material = "*"
+mkdocs-mermaid2-plugin = "*"
+
+[feature.client.pypi-dependencies]
+ipython = "*"
+
+[feature.tiled.pypi-dependencies]
+tiled = { version = "*", extras = ["client"] }
+
+[environments]
+client = ["client"]
+tiled = ["client", "tiled"]
+
+[tasks]
+serve   = "uvicorn splash_links.main:app --host 0.0.0.0 --port 8080 --reload"
+test    = "pytest --cov=splash_links --cov-report=term-missing --cov-fail-under=90"
+lint    = "ruff check src _tests"
+fmt     = "ruff format src _tests"
+docs    = "mkdocs serve -f mkdocs/mkdocs.yml"
+db      = "splash-links shell"
+entities = "splash-links entities"
+links   = "splash-links links"
