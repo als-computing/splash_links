@@ -143,3 +143,5 @@ sfapi_training.json
 
 .ruff_cache/
 *.duckdb
+*.sqlite
+*.sqlite3

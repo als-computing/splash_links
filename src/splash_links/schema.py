@@ -51,6 +51,7 @@ class Entity:
     id: strawberry.ID
     entity_type: str
     name: str
+    uri: Optional[str]
     properties: Optional[JSON]  # type: ignore[valid-type]
     created_at: str
 
@@ -111,6 +112,7 @@ def _entity_from_record(r: EntityRecord) -> Entity:
         id=strawberry.ID(r.id),
         entity_type=r.entity_type,
         name=r.name,
+        uri=r.uri,
         properties=r.properties if r.properties else None,
         created_at=r.created_at.isoformat(),
     )
@@ -133,9 +135,22 @@ def _link_from_record(r: LinkRecord) -> Link:
 
 
 @strawberry.input
+class UpdateEntityInput:
+    name: Optional[str] = None
+    uri: Optional[str] = None
+    entity_type: Optional[str] = None
+
+
+@strawberry.input
+class UpdateLinkInput:
+    predicate: str
+
+
+@strawberry.input
 class CreateEntityInput:
     entity_type: str
     name: str
+    uri: Optional[str] = None
     properties: Optional[JSON] = None  # type: ignore[valid-type]
 
 
@@ -206,6 +221,7 @@ class Mutation:
         record = _store(info).create_entity(
             entity_type=input.entity_type,
             name=input.name,
+            uri=input.uri,
             properties=input.properties,
         )
         return _entity_from_record(record)
@@ -226,9 +242,24 @@ class Mutation:
     def delete_entity(self, info: Info, id: strawberry.ID) -> bool:
         return _store(info).delete_entity(str(id))
 
+    @strawberry.mutation(description="Update an entity's name, uri, or entity_type.")
+    def update_entity(self, info: Info, id: strawberry.ID, input: UpdateEntityInput) -> Optional[Entity]:
+        record = _store(info).update_entity(
+            str(id),
+            name=input.name,
+            uri=input.uri,
+            entity_type=input.entity_type,
+        )
+        return _entity_from_record(record) if record else None
+
     @strawberry.mutation(description="Delete a single link. Returns true if found.")
     def delete_link(self, info: Info, id: strawberry.ID) -> bool:
         return _store(info).delete_link(str(id))
+
+    @strawberry.mutation(description="Update a link's predicate.")
+    def update_link(self, info: Info, id: strawberry.ID, input: UpdateLinkInput) -> Optional[Link]:
+        record = _store(info).update_link(str(id), predicate=input.predicate)
+        return _link_from_record(record) if record else None
 
 
 # ---------------------------------------------------------------------------

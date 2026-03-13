@@ -2,7 +2,7 @@
 
 A FastAPI service for storing and querying directed, predicate-labeled relationships between arbitrary entities — like a lightweight triplestore, without SPARQL.
 
-Relationships are stored in [DuckDB](https://duckdb.org/) (with an eye toward [pgduck](https://github.com/duckdb/pg_duckdb) in the future) and exposed through a [GraphQL](https://graphql.org/) API built with [Strawberry](https://strawberry.rocks/).
+Relationships are stored in [SQLite](https://sqlite.org/) and exposed through a [GraphQL](https://graphql.org/) API built with [Strawberry](https://strawberry.rocks/).
 
 ## Concepts
 
@@ -26,10 +26,10 @@ pixi run serve        # start the dev server at http://localhost:8080
 
 The GraphiQL IDE is available at **http://localhost:8080/graphql**.
 
-Set `SPLASH_LINKS_DB` to a file path to persist data across restarts (defaults to `links.duckdb` when launched via `pixi run serve`):
+Set `SPLASH_LINKS_DB` to a file path to persist data across restarts (defaults to `links.sqlite` when launched via `pixi run serve`):
 
 ```bash
-SPLASH_LINKS_DB=/data/links.duckdb pixi run serve
+SPLASH_LINKS_DB=/data/links.sqlite pixi run serve
 ```
 
 ### With Docker
@@ -37,7 +37,7 @@ SPLASH_LINKS_DB=/data/links.duckdb pixi run serve
 ```bash
 docker build -t splash-links .
 docker run -p 8080:8080 -v $(pwd)/data:/data \
-  -e SPLASH_LINKS_DB=/data/links.duckdb \
+  -e SPLASH_LINKS_DB=/data/links.sqlite \
   splash-links
 ```
 
@@ -103,9 +103,9 @@ GET /health  →  {"status": "ok"}
 
 ## Inspecting the database
 
-The `splash-links` CLI lets you view stored data and open a raw DuckDB shell without needing to run the server.
+The `splash-links` CLI lets you view stored data and open a raw SQLite shell without needing to run the server.
 
-All commands read the database from `$SPLASH_LINKS_DB` (defaulting to `links.duckdb` in the current directory).
+All commands read the database from `$SPLASH_LINKS_DB` (defaulting to `links.sqlite` in the current directory).
 
 ### List entities
 
@@ -124,7 +124,7 @@ pixi run links -- --subject <entity-id>     # outgoing from a node
 pixi run links -- --object  <entity-id>     # incoming to a node
 ```
 
-### Raw DuckDB shell
+### Raw SQLite shell
 
 ```bash
 pixi run db
@@ -132,7 +132,7 @@ pixi run db
 splash-links shell
 ```
 
-This opens an interactive DuckDB prompt. Useful queries:
+This opens an interactive SQLite prompt. Useful queries:
 
 ```sql
 SELECT * FROM entities;
@@ -213,7 +213,7 @@ Tests require ≥ 90% coverage and will fail the build if that threshold is not 
 | `docs` | `pixi run docs` | Serve MkDocs site locally |
 | `entities` | `pixi run entities` | List entities in the database |
 | `links` | `pixi run links` | List links in the database |
-| `db` | `pixi run db` | Open raw DuckDB interactive shell |
+| `db` | `pixi run db` | Open raw SQLite interactive shell |
 
 Pass extra flags after `--`, e.g. `pixi run entities -- --type Experiment --limit 5`.
 
@@ -222,7 +222,7 @@ Pass extra flags after `--`, e.g. `pixi run entities -- --type Experiment --limi
 ```
 src/splash_links/
     __init__.py   — package exports
-    store.py      — abstract Store interface + DuckDBStore implementation
+    store.py      — abstract Store interface + SQLiteStore implementation
     schema.py     — Strawberry GraphQL types, queries, mutations
     app.py        — FastAPI app factory (create_app)
     main.py       — uvicorn entry point
@@ -238,7 +238,7 @@ Dockerfile       — two-stage build (pixi build → debian:bookworm-slim runtim
 
 ### Storage and future backends
 
-The `Store` ABC in `store.py` decouples the service from DuckDB. To target Postgres via pgduck (or any other SQL backend), implement the same interface and pass an instance to `create_app`. The DuckDB file path is controlled by the `SPLASH_LINKS_DB` environment variable.
+The `Store` ABC in `store.py` decouples the service from SQLite. To target Postgres or any other SQL backend later, implement the same interface and pass an instance to `create_app`. The database file path is controlled by the `SPLASH_LINKS_DB` environment variable.
 
 ### CI
 

@@ -4,17 +4,18 @@ CLI for splash-links local DB inspection and remote client operations.
 Usage:
     splash-links entities [--type TYPE] [--limit N]
     splash-links links    [--subject ID] [--predicate PRED] [--object ID] [--limit N]
-    splash-links shell    # drop into the raw DuckDB CLI
+    splash-links shell    # drop into the raw SQLite CLI
     splash-links client --help
 
 The database file is read from the SPLASH_LINKS_DB environment variable,
-defaulting to links.duckdb in the current directory.
+defaulting to links.sqlite in the current directory.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from typing import Optional
 
 import typer
@@ -23,7 +24,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .client.cli import app as client_app
-from .store import DuckDBStore
+from .store import SQLiteStore
 
 app = typer.Typer(help="Splash-links command line tools.")
 app.add_typer(client_app, name="client", help="Interact with the GraphQL service via the HTTP client.")
@@ -31,15 +32,15 @@ console = Console()
 
 
 def _db_path() -> str:
-    return os.environ.get("SPLASH_LINKS_DB", "links.duckdb")
+    return os.environ.get("SPLASH_LINKS_DB", "links.sqlite")
 
 
-def _open_store() -> DuckDBStore:
+def _open_store() -> SQLiteStore:
     path = _db_path()
     if path != ":memory:" and not os.path.exists(path):
         typer.echo(f"Database not found: {path}", err=True)
         raise typer.Exit(code=1)
-    return DuckDBStore(path)
+    return SQLiteStore(path)
 
 
 @app.command()
@@ -125,8 +126,8 @@ def shell() -> None:
     import readline  # noqa: F401 — enables arrow-key editing on most platforms
 
     path = _db_path()
-    conn = __import__("duckdb").connect(path)
-    console.print(f"[bold]DuckDB shell[/bold] — [dim]{path}[/dim]")
+    conn = sqlite3.connect(path, isolation_level=None)
+    console.print(f"[bold]SQLite shell[/bold] — [dim]{path}[/dim]")
     console.print("[dim]Enter SQL statements. Type 'exit' or Ctrl-D to quit.[/dim]\n")
     buf: list[str] = []
     while True:

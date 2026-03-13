@@ -29,24 +29,11 @@ def _parse_json_option(name: str, raw: Optional[str]) -> Optional[dict[str, Any]
 
 
 def _entity_as_dict(entity: Entity) -> dict[str, Any]:
-    return {
-        "id": entity.id,
-        "entity_type": entity.entity_type,
-        "name": entity.name,
-        "properties": entity.properties,
-        "created_at": entity.created_at,
-    }
+    return entity.model_dump()
 
 
 def _link_as_dict(link: Link) -> dict[str, Any]:
-    return {
-        "id": link.id,
-        "subject_id": link.subject_id,
-        "predicate": link.predicate,
-        "object_id": link.object_id,
-        "properties": link.properties,
-        "created_at": link.created_at,
-    }
+    return link.model_dump()
 
 
 def _emit_json(payload: Any) -> None:
@@ -105,7 +92,12 @@ def create_link(
     props = _parse_json_option("properties", properties)
     client = from_uri(uri)
     try:
-        link = client.create_link(subject_id=subject_id, predicate=predicate, object_id=object_id, properties=props)
+        link = client.create_link(
+            subject_id=subject_id,
+            predicate=predicate,
+            object_id=object_id,
+            properties=props,
+        )
     except Exception as exc:
         typer.echo(f"Failed to create link: {exc}", err=True)
         raise typer.Exit(code=1) from exc

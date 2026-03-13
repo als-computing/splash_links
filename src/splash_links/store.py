@@ -2,38 +2,41 @@
 Storage layer for the splash-links entity graph service.
 
 The abstract `Store` interface decouples the application from the underlying
-database, making it straightforward to swap DuckDB for pgduck (Postgres +
-DuckDB extension) or any other SQL backend in the future.
+database, making it straightforward to target SQLite today and another SQL
+backend later without changing the API surface.
 """
 
 from __future__ import annotations
 
 import abc
 import json
+import sqlite3
 import threading
 import uuid
-from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
-import duckdb
+from pydantic import BaseModel, ConfigDict
 
 # ---------------------------------------------------------------------------
-# Data records (plain dataclasses, not Pydantic, to stay dependency-light)
+# Data records
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class EntityRecord:
+class EntityRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     entity_type: str
     name: str
+    uri: Optional[str]
     properties: dict
     created_at: datetime
 
 
-@dataclass
-class LinkRecord:
+class LinkRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     subject_id: str
     predicate: str
@@ -55,6 +58,7 @@ class Store(abc.ABC):
         self,
         entity_type: str,
         name: str,
+        uri: Optional[str] = None,
         properties: Optional[dict] = None,
     ) -> EntityRecord: ...
 
@@ -71,6 +75,15 @@ class Store(abc.ABC):
 
     @abc.abstractmethod
     def delete_entity(self, id: str) -> bool: ...
+
+    @abc.abstractmethod
+    def update_entity(
+        self,
+        id: str,
+        name: Optional[str] = None,
+        uri: Optional[str] = None,
+        entity_type: Optional[str] = None,
+    ) -> Optional[EntityRecord]: ...
 
     @abc.abstractmethod
     def create_link(
@@ -98,51 +111,67 @@ class Store(abc.ABC):
     def delete_link(self, id: str) -> bool: ...
 
     @abc.abstractmethod
+    def update_link(self, id: str, predicate: str) -> Optional[LinkRecord]: ...
+
+    @abc.abstractmethod
     def close(self) -> None: ...
 
 
 # ---------------------------------------------------------------------------
-# DuckDB implementation
+# SQLite implementation
 # ---------------------------------------------------------------------------
 
 _SCHEMA_SQL = """
+PRAGMA foreign_keys = ON;
+
 CREATE TABLE IF NOT EXISTS entities (
-    id          TEXT        PRIMARY KEY,
-    entity_type TEXT        NOT NULL,
-    name        TEXT        NOT NULL,
-    properties  JSON,
-    created_at  TIMESTAMPTZ DEFAULT now()
+    id          TEXT PRIMARY KEY,
+    entity_type TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    uri         TEXT,
+    properties  TEXT NOT NULL,
+    created_at  TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS entities_uri_idx ON entities (uri);
 
 CREATE TABLE IF NOT EXISTS links (
-    id          TEXT        PRIMARY KEY,
-    subject_id  TEXT        NOT NULL,
-    predicate   TEXT        NOT NULL,
-    object_id   TEXT        NOT NULL,
-    properties  JSON,
-    created_at  TIMESTAMPTZ DEFAULT now()
+    id          TEXT PRIMARY KEY,
+    subject_id  TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    predicate   TEXT NOT NULL,
+    object_id   TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    properties  TEXT NOT NULL,
+    created_at  TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS links_subject_idx   ON links (subject_id);
-CREATE INDEX IF NOT EXISTS links_object_idx    ON links (object_id);
-CREATE INDEX IF NOT EXISTS links_predicate_idx ON links (predicate);
+-- Compound indexes cover the multi-field combinations used by find_links.
+-- The leading columns also satisfy single-field queries, so no single-column
+-- indexes are needed for subject_id, predicate, or object_id.
+CREATE INDEX IF NOT EXISTS entities_type_created_idx
+    ON entities (entity_type, created_at);
+
+CREATE INDEX IF NOT EXISTS links_subject_predicate_idx
+    ON links (subject_id, predicate);
+
+CREATE INDEX IF NOT EXISTS links_predicate_object_idx
+    ON links (predicate, object_id);
+
+-- Covering index for exact (subject, predicate, object) triple lookups.
+CREATE INDEX IF NOT EXISTS links_triple_idx
+    ON links (subject_id, predicate, object_id);
 """
 
 
-class DuckDBStore(Store):
+class SQLiteStore(Store):
     """
-    DuckDB-backed store.
+    SQLite-backed store.
 
-    Thread-safety: DuckDB's in-process mode allows concurrent reads; we guard
-    writes with a lock so FastAPI's thread-pool workers don't collide.
-
-    pgduck migration path: Replace ``duckdb.connect`` with a connection that
-    uses DuckDB's ``postgres_scan`` / ``ATTACH`` extension, or drop in a
-    postgres-dialect store that implements the same ``Store`` ABC.
+    A single connection is shared across the process with a lock around all
+    operations so FastAPI worker threads do not race each other.
     """
 
     def __init__(self, db_path: str = ":memory:") -> None:
-        self._conn = duckdb.connect(db_path)
+        self._conn = sqlite3.connect(db_path, check_same_thread=False, isolation_level=None)
         self._lock = threading.Lock()
         self._init_schema()
 
@@ -152,41 +181,47 @@ class DuckDBStore(Store):
 
     def _init_schema(self) -> None:
         with self._lock:
-            for stmt in _SCHEMA_SQL.strip().split(";"):
-                stmt = stmt.strip()
-                if stmt:
-                    self._conn.execute(stmt)
+            self._conn.executescript(_SCHEMA_SQL)
+            # Migrate pre-uri databases: add the column if it doesn't exist yet.
+            cols = {row[1] for row in self._conn.execute("PRAGMA table_info(entities)")}
+            if "uri" not in cols:
+                self._conn.execute("ALTER TABLE entities ADD COLUMN uri TEXT")
 
     # ------------------------------------------------------------------
     # Row conversion helpers
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _to_entity(row: tuple) -> EntityRecord:
-        id_, entity_type, name, properties, created_at = row
-        if isinstance(properties, str):
-            properties = json.loads(properties) if properties else {}
+    def _parse_timestamp(value: str) -> datetime:
+        return datetime.fromisoformat(value)
+
+    @classmethod
+    def _to_entity(cls, row: tuple) -> EntityRecord:
+        id_, entity_type, name, uri, properties, created_at = row
         return EntityRecord(
             id=id_,
             entity_type=entity_type,
             name=name,
-            properties=properties or {},
-            created_at=created_at,
+            uri=uri,
+            properties=json.loads(properties) if properties else {},
+            created_at=cls._parse_timestamp(created_at),
         )
 
-    @staticmethod
-    def _to_link(row: tuple) -> LinkRecord:
+    @classmethod
+    def _to_link(cls, row: tuple) -> LinkRecord:
         id_, subject_id, predicate, object_id, properties, created_at = row
-        if isinstance(properties, str):
-            properties = json.loads(properties) if properties else {}
         return LinkRecord(
             id=id_,
             subject_id=subject_id,
             predicate=predicate,
             object_id=object_id,
-            properties=properties or {},
-            created_at=created_at,
+            properties=json.loads(properties) if properties else {},
+            created_at=cls._parse_timestamp(created_at),
         )
+
+    @staticmethod
+    def _timestamp_now() -> str:
+        return datetime.now(timezone.utc).isoformat()
 
     # ------------------------------------------------------------------
     # Entity operations
@@ -196,18 +231,20 @@ class DuckDBStore(Store):
         self,
         entity_type: str,
         name: str,
+        uri: Optional[str] = None,
         properties: Optional[dict] = None,
     ) -> EntityRecord:
         id_ = str(uuid.uuid4())
+        created_at = self._timestamp_now()
         props_json = json.dumps(properties or {})
         with self._lock:
             self._conn.execute(
-                "INSERT INTO entities (id, entity_type, name, properties) "
-                "VALUES (?, ?, ?, ?::JSON)",
-                [id_, entity_type, name, props_json],
+                "INSERT INTO entities (id, entity_type, name, uri, properties, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                [id_, entity_type, name, uri, props_json, created_at],
             )
             row = self._conn.execute(
-                "SELECT id, entity_type, name, properties, created_at "
+                "SELECT id, entity_type, name, uri, properties, created_at "
                 "FROM entities WHERE id = ?",
                 [id_],
             ).fetchone()
@@ -216,7 +253,7 @@ class DuckDBStore(Store):
     def get_entity(self, id: str) -> Optional[EntityRecord]:
         with self._lock:
             row = self._conn.execute(
-                "SELECT id, entity_type, name, properties, created_at "
+                "SELECT id, entity_type, name, uri, properties, created_at "
                 "FROM entities WHERE id = ?",
                 [id],
             ).fetchone()
@@ -231,30 +268,53 @@ class DuckDBStore(Store):
         with self._lock:
             if entity_type:
                 rows = self._conn.execute(
-                    "SELECT id, entity_type, name, properties, created_at "
+                    "SELECT id, entity_type, name, uri, properties, created_at "
                     "FROM entities WHERE entity_type = ? "
                     "ORDER BY created_at LIMIT ? OFFSET ?",
                     [entity_type, limit, offset],
                 ).fetchall()
             else:
                 rows = self._conn.execute(
-                    "SELECT id, entity_type, name, properties, created_at "
+                    "SELECT id, entity_type, name, uri, properties, created_at "
                     "FROM entities ORDER BY created_at LIMIT ? OFFSET ?",
                     [limit, offset],
                 ).fetchall()
         return [self._to_entity(r) for r in rows]
 
     def delete_entity(self, id: str) -> bool:
-        """Delete an entity and cascade-remove all its links."""
+        with self._lock:
+            cursor = self._conn.execute("DELETE FROM entities WHERE id = ?", [id])
+        return cursor.rowcount > 0
+
+    def update_entity(
+        self,
+        id: str,
+        name: Optional[str] = None,
+        uri: Optional[str] = None,
+        entity_type: Optional[str] = None,
+    ) -> Optional[EntityRecord]:
+        fields, params = [], []
+        if name is not None:
+            fields.append("name = ?")
+            params.append(name)
+        if uri is not None:
+            fields.append("uri = ?")
+            params.append(uri)
+        if entity_type is not None:
+            fields.append("entity_type = ?")
+            params.append(entity_type)
+        if not fields:
+            return self.get_entity(id)
+        params.append(id)
         with self._lock:
             self._conn.execute(
-                "DELETE FROM links WHERE subject_id = ? OR object_id = ?",
-                [id, id],
+                f"UPDATE entities SET {', '.join(fields)} WHERE id = ?", params
             )
-            result = self._conn.execute(
-                "DELETE FROM entities WHERE id = ? RETURNING id", [id]
+            row = self._conn.execute(
+                "SELECT id, entity_type, name, uri, properties, created_at FROM entities WHERE id = ?",
+                [id],
             ).fetchone()
-        return result is not None
+        return self._to_entity(row) if row else None
 
     # ------------------------------------------------------------------
     # Link operations
@@ -267,19 +327,19 @@ class DuckDBStore(Store):
         object_id: str,
         properties: Optional[dict] = None,
     ) -> LinkRecord:
-        # Validate both endpoints exist before inserting.
         if not self.get_entity(subject_id):
             raise ValueError(f"Subject entity '{subject_id}' not found")
         if not self.get_entity(object_id):
             raise ValueError(f"Object entity '{object_id}' not found")
 
         id_ = str(uuid.uuid4())
+        created_at = self._timestamp_now()
         props_json = json.dumps(properties or {})
         with self._lock:
             self._conn.execute(
-                "INSERT INTO links (id, subject_id, predicate, object_id, properties) "
-                "VALUES (?, ?, ?, ?, ?::JSON)",
-                [id_, subject_id, predicate, object_id, props_json],
+                "INSERT INTO links (id, subject_id, predicate, object_id, properties, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                [id_, subject_id, predicate, object_id, props_json, created_at],
             )
             row = self._conn.execute(
                 "SELECT id, subject_id, predicate, object_id, properties, created_at "
@@ -306,7 +366,7 @@ class DuckDBStore(Store):
         offset: int = 0,
     ) -> list[LinkRecord]:
         conditions: list[str] = []
-        params: list = []
+        params: list[str | int] = []
         if subject_id is not None:
             conditions.append("subject_id = ?")
             params.append(subject_id)
@@ -330,10 +390,20 @@ class DuckDBStore(Store):
 
     def delete_link(self, id: str) -> bool:
         with self._lock:
-            result = self._conn.execute(
-                "DELETE FROM links WHERE id = ? RETURNING id", [id]
+            cursor = self._conn.execute("DELETE FROM links WHERE id = ?", [id])
+        return cursor.rowcount > 0
+
+    def update_link(self, id: str, predicate: str) -> Optional[LinkRecord]:
+        with self._lock:
+            self._conn.execute("UPDATE links SET predicate = ? WHERE id = ?", [predicate, id])
+            row = self._conn.execute(
+                "SELECT id, subject_id, predicate, object_id, properties, created_at FROM links WHERE id = ?",
+                [id],
             ).fetchone()
-        return result is not None
+        return self._to_link(row) if row else None
 
     def close(self) -> None:
         self._conn.close()
+
+
+DuckDBStore = SQLiteStore

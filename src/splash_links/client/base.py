@@ -13,41 +13,44 @@ Usage::
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Optional
 from urllib.parse import urlparse
 
 import httpx
+from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
-# Response dataclasses
+# Response models
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class Entity:
+class Entity(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
     id: str
-    entity_type: str
+    entity_type: str = Field(alias="entityType")
     name: str
+    uri: Optional[str] = None
     properties: Optional[dict]
-    created_at: str
+    created_at: str = Field(alias="createdAt")
 
 
-@dataclass
-class Link:
+class Link(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
     id: str
-    subject_id: str
+    subject_id: str = Field(alias="subjectId")
     predicate: str
-    object_id: str
+    object_id: str = Field(alias="objectId")
     properties: Optional[dict]
-    created_at: str
+    created_at: str = Field(alias="createdAt")
 
 
 # ---------------------------------------------------------------------------
 # GraphQL operations
 # ---------------------------------------------------------------------------
 
-_ENTITY_FIELDS = "id entityType name properties createdAt"
+_ENTITY_FIELDS = "id entityType name uri properties createdAt"
 _LINK_FIELDS = "id subjectId predicate objectId properties createdAt"
 
 _CREATE_ENTITY_MUTATION = f"""
@@ -75,29 +78,16 @@ query FindLinks($subjectId: ID, $objectId: ID, $predicate: String, $limit: Int, 
 
 
 # ---------------------------------------------------------------------------
-# Record -> dataclass helpers
+# Record -> model helpers
 # ---------------------------------------------------------------------------
 
 
 def _entity_from_dict(d: dict) -> Entity:
-    return Entity(
-        id=d["id"],
-        entity_type=d["entityType"],
-        name=d["name"],
-        properties=d.get("properties"),
-        created_at=d["createdAt"],
-    )
+    return Entity.model_validate(d)
 
 
 def _link_from_dict(d: dict) -> Link:
-    return Link(
-        id=d["id"],
-        subject_id=d["subjectId"],
-        predicate=d["predicate"],
-        object_id=d["objectId"],
-        properties=d.get("properties"),
-        created_at=d["createdAt"],
-    )
+    return Link.model_validate(d)
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +143,7 @@ class LinksClient:
         entity_type: str,
         properties: Optional[dict] = None,
         name: Optional[str] = None,
+        uri: Optional[str] = None,
     ) -> Entity:
         """
         Create an entity on the server.
@@ -168,6 +159,7 @@ class LinksClient:
                 "input": {
                     "entityType": entity_type,
                     "name": resolved_name,
+                    "uri": uri,
                     "properties": props or None,
                 }
             },

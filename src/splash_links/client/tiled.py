@@ -48,9 +48,9 @@ def get_or_create_entity(client: "LinksClient", node: Any) -> "Entity":
 
     name = _node_name(node, uri)
     entity = client.create_entity(
-        entity_type="TiledNode",
+        entity_type="tiled",
         name=name,
-        properties={"uri": uri},
+        uri=uri,
     )
     client._tiled_cache[uri] = entity
     return entity

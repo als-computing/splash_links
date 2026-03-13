@@ -1,7 +1,7 @@
 [workspace]
 name = "splash-links"
 version = "0.1.0"
-description = "Entity link graph service backed by DuckDB and served over GraphQL"
+description = "Entity link graph service backed by SQLite and served over GraphQL"
 channels = ["https://prefix.dev/conda-forge"]
 platforms = ["linux-64", "osx-arm64", "osx-64"]
 
@@ -9,6 +9,7 @@ platforms = ["linux-64", "osx-arm64", "osx-64"]
 python = ">=3.11,<3.13"
 pytz = "*"
 pip = "*"
+nodejs = ">=20"
 
 [pypi-dependencies]
 # Install the local package (and its runtime deps from pyproject.toml) as editable.
@@ -45,3 +46,6 @@ docs    = "mkdocs serve -f mkdocs/mkdocs.yml"
 db      = "splash-links shell"
 entities = "splash-links entities"
 links   = "splash-links links"
+frontend-install = "npm install --prefix frontend"
+frontend-dev  = { cmd = "npm run dev --prefix frontend", depends-on = ["frontend-install"] }
+frontend-build = { cmd = "npm run build --prefix frontend", depends-on = ["frontend-install"] }

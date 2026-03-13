@@ -1,7 +1,7 @@
 """
 Integration tests for the splash-links service.
 
-All tests use an in-memory DuckDB store and the ASGI test client so no
+All tests use an in-memory SQLite store and the ASGI test client so no
 external process or file is needed.
 """
 
@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from splash_links.app import create_app
-from splash_links.store import DuckDBStore
+from splash_links.store import SQLiteStore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -21,7 +21,7 @@ from splash_links.store import DuckDBStore
 @pytest.fixture()
 def store():
     """Fresh in-memory store for each test."""
-    s = DuckDBStore(":memory:")
+    s = SQLiteStore(":memory:")
     yield s
     s.close()
 
@@ -93,9 +93,9 @@ def test_health(client):
 # ---------------------------------------------------------------------------
 
 
-class TestDuckDBStore:
+class TestSQLiteStore:
     def test_create_and_get_entity(self, store):
-        e = store.create_entity("Dataset", "SAXS run 001", {"beamline": "12.3.1"})
+        e = store.create_entity("Dataset", "SAXS run 001", properties={"beamline": "12.3.1"})
         assert e.id
         assert e.entity_type == "Dataset"
         assert e.name == "SAXS run 001"

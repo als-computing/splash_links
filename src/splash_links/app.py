@@ -4,8 +4,8 @@ FastAPI application factory for splash-links.
 Usage:
     from splash_links.app import create_app
 
-    app = create_app()                        # in-memory DuckDB
-    app = create_app(db_path="links.duckdb")  # persistent file
+    app = create_app()                        # in-memory SQLite
+    app = create_app(db_path="links.sqlite")  # persistent file
     app = create_app(db_path=os.getenv("SPLASH_LINKS_DB", ":memory:"))
 
 The GraphQL playground is available at /graphql when the app is running.
@@ -18,10 +18,11 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Optional
 
 from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
 from strawberry.fastapi import GraphQLRouter
 
 from .schema import schema
-from .store import DuckDBStore, Store
+from .store import SQLiteStore, Store
 
 
 def create_app(db_path: Optional[str] = None) -> FastAPI:
@@ -29,7 +30,7 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
     Create and configure the FastAPI application.
 
     Args:
-        db_path: Path to the DuckDB database file.  Defaults to the
+        db_path: Path to the SQLite database file.  Defaults to the
                  ``SPLASH_LINKS_DB`` environment variable, falling back to
                  ``:memory:`` (ephemeral, useful for testing).
     """
@@ -37,7 +38,7 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-        store: Store = DuckDBStore(resolved_db_path)
+        store: Store = SQLiteStore(resolved_db_path)
         app.state.store = store
         try:
             yield
@@ -70,5 +71,9 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
     @app.get("/health", tags=["ops"], summary="Liveness check")
     def health() -> dict:
         return {"status": "ok"}
+
+    static_dir = os.environ.get("SPLASH_LINKS_STATIC_DIR", "")
+    if static_dir and os.path.isdir(static_dir):
+        app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
 
     return app

@@ -18,6 +18,10 @@ dist/
 *.tmp
 *.bak
 
+# Frontend build artifacts (built inside container, not needed in context)
+frontend/node_modules/
+frontend/dist/
+
 # Docker / Git / CI
 Dockerfile.*
 .dockerignore
