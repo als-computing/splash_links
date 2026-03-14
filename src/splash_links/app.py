@@ -38,23 +38,29 @@ def _run_migrations(db_url: str) -> None:
         return
 
     from alembic.config import Config
-    from sqlalchemy import inspect as sa_inspect
+    from sqlalchemy import text
 
     from alembic import command
 
     here = os.path.dirname(os.path.abspath(__file__))
-    ini_path = os.path.normpath(os.path.join(here, "..", "..", "..", "alembic.ini"))
+    project_root = os.path.normpath(os.path.join(here, "..", ".."))
+    alembic_dir = os.path.join(project_root, "alembic")
 
-    alembic_cfg = Config(ini_path)
+    # Don't pass ini_path to Config — avoids fileConfig() reconfiguring
+    # the logging system mid-app (which can interfere with uvicorn's handlers).
+    alembic_cfg = Config()
+    alembic_cfg.set_main_option("script_location", alembic_dir)
     alembic_cfg.set_main_option("sqlalchemy.url", db_url)
 
+    # Use a context manager so the connection is definitely closed and the
+    # SQLite write lock released before alembic opens its own connection.
     engine = _make_engine(db_url)
     try:
-        inspector = sa_inspect(engine)
-        tables = inspector.get_table_names()
-        if "entities" in tables and "alembic_version" not in tables:
-            logger.info("Pre-alembic database detected — stamping as head")
-            command.stamp(alembic_cfg, "head")
+        with engine.connect() as conn:
+            tables = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).scalars().all()
+            if "entities" in tables and "alembic_version" not in tables:
+                logger.info("Pre-alembic database detected — stamping as head")
+                command.stamp(alembic_cfg, "head")
     finally:
         engine.dispose()
 
@@ -108,14 +114,14 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
         lifespan=lifespan,
     )
 
-    app.include_router(graphql_router, prefix="/graphql")
+    app.include_router(graphql_router, prefix="/splash_links/graphql")
 
-    @app.get("/health", tags=["ops"], summary="Liveness check")
+    @app.get("/splash_links/health", tags=["ops"], summary="Liveness check")
     def health() -> dict:
         return {"status": "ok"}
 
     static_dir = os.environ.get("SPLASH_LINKS_STATIC_DIR", "")
     if static_dir and os.path.isdir(static_dir):
-        app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+        app.mount("/splash_links", StaticFiles(directory=static_dir, html=True), name="static")
 
     return app

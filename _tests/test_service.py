@@ -38,7 +38,7 @@ def client():
 # Helpers
 # ---------------------------------------------------------------------------
 
-_GQL = "/graphql"
+_GQL = "/splash_links/graphql"
 
 
 def gql(client: TestClient, query: str, variables: dict | None = None) -> dict:
@@ -83,7 +83,7 @@ mutation CreateLink($input: CreateLinkInput!) {
 
 
 def test_health(client):
-    resp = client.get("/health")
+    resp = client.get("/splash_links/health")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
 

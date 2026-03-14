@@ -21,9 +21,9 @@ class FakeResponse:
 
 
 def test_from_uri_supports_expected_schemes():
-    assert from_uri("splash://localhost:8080")._gql_url == "http://localhost:8080/graphql"
-    assert from_uri("http://example.com")._gql_url == "http://example.com/graphql"
-    assert from_uri("https://example.com")._gql_url == "https://example.com/graphql"
+    assert from_uri("splash://localhost:8080")._gql_url == "http://localhost:8080/splash_links/graphql"
+    assert from_uri("http://example.com")._gql_url == "http://example.com/splash_links/graphql"
+    assert from_uri("https://example.com")._gql_url == "https://example.com/splash_links/graphql"
 
     with pytest.raises(ValueError, match="Unsupported URI scheme"):
         from_uri("ftp://example.com")
@@ -69,7 +69,7 @@ def test_create_entity_posts_expected_payload(monkeypatch):
     entity = client.create_entity("Sample", {"name": "SAXS Run 1", "beamline": "12.3.1"})
 
     assert entity.id == "ent-1"
-    assert seen["url"] == "http://api:8080/graphql"
+    assert seen["url"] == "http://api:8080/splash_links/graphql"
     assert seen["timeout"] == 30.0
     assert seen["json"] == {
         "query": base_module._CREATE_ENTITY_MUTATION,

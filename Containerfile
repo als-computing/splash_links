@@ -17,6 +17,8 @@ WORKDIR /app
 # Copy only the files pixi needs first so layer cache is reused on code-only changes.
 COPY pixi.toml pyproject.toml ./
 COPY src/ src/
+COPY alembic/ alembic/
+COPY alembic.ini .
 
 RUN pixi install
 
@@ -28,6 +30,8 @@ WORKDIR /app
 # Bring across the resolved environment (conda + pypi) but not the pixi toolchain.
 COPY --from=pixi-build /app/.pixi/envs/default /app/.pixi/envs/default
 COPY src/ src/
+COPY alembic/ alembic/
+COPY alembic.ini .
 
 # Copy the built frontend so FastAPI can serve it as static files.
 COPY --from=frontend-build /frontend/dist /app/frontend/dist

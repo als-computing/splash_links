@@ -1,4 +1,4 @@
-const GQL_URL = '/graphql';
+const GQL_URL = '/splash_links/graphql';
 
 async function gql(query, variables = {}) {
   const res = await fetch(GQL_URL, {

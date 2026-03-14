@@ -104,7 +104,7 @@ class LinksClient:
     """
 
     def __init__(self, base_url: str) -> None:
-        self._gql_url = base_url.rstrip("/") + "/graphql"
+        self._gql_url = base_url.rstrip("/") + "/splash_links/graphql"
         # Cache: tiled node URI -> Entity, avoids duplicate entity creation
         self._tiled_cache: dict[str, Entity] = {}
 
