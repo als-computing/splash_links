@@ -5,6 +5,8 @@ import pytest
 from splash_links.client import base as base_module
 from splash_links.client import tiled as tiled_module
 from splash_links.client.base import Entity, LinksClient, from_uri
+from splash_links.client.tiled import _node_name, _node_uri
+from splash_links.client.tiled import get_or_create_entity as tiled_get_or_create
 
 
 class FakeResponse:
@@ -191,3 +193,75 @@ def test_find_links_deduplicates_records(monkeypatch):
         "limit": 5,
         "offset": 2,
     }
+
+
+# ---------------------------------------------------------------------------
+# Tiled integration helpers
+# ---------------------------------------------------------------------------
+
+
+def test_node_uri_extracts_uri_attribute():
+    class Node:
+        uri = "https://tiled.example.com/datasets/run1"
+
+    assert _node_uri(Node()) == "https://tiled.example.com/datasets/run1"
+
+
+def test_node_uri_raises_when_no_uri_attribute():
+    with pytest.raises(TypeError, match="Cannot extract a URI"):
+        _node_uri(object())
+
+
+def test_node_name_uses_key_attribute():
+    class Node:
+        key = "my-run"
+
+    assert _node_name(Node(), "https://example.com/my-run") == "my-run"
+
+
+def test_node_name_falls_back_to_uri_segment():
+    assert _node_name(object(), "https://example.com/some/path/") == "path"
+
+
+def test_get_or_create_entity_returns_cached():
+    client = LinksClient("http://example.com")
+    cached = Entity(
+        id="ent-cached",
+        entity_type="tiled",
+        name="cached-node",
+        properties=None,
+        created_at="2026-01-01T00:00:00Z",
+    )
+    client._tiled_cache["https://tiled.example.com/node"] = cached
+
+    class Node:
+        uri = "https://tiled.example.com/node"
+
+    result = tiled_get_or_create(client, Node())
+    assert result.id == "ent-cached"
+
+
+def test_get_or_create_entity_creates_and_caches(monkeypatch):
+    client = LinksClient("http://example.com")
+
+    def fake_execute(query: str, variables: dict | None = None) -> dict:
+        return {
+            "createEntity": {
+                "id": "ent-new",
+                "entityType": "tiled",
+                "name": "new-node",
+                "properties": None,
+                "createdAt": "2026-01-01T00:00:00Z",
+                "uri": "https://tiled.example.com/new-node",
+            }
+        }
+
+    monkeypatch.setattr(client, "_execute", fake_execute)
+
+    class Node:
+        uri = "https://tiled.example.com/new-node"
+        key = "new-node"
+
+    result = tiled_get_or_create(client, Node())
+    assert result.id == "ent-new"
+    assert "https://tiled.example.com/new-node" in client._tiled_cache

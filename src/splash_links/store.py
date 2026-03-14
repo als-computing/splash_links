@@ -1,22 +1,46 @@
 """
 Storage layer for the splash-links entity graph service.
 
-The abstract `Store` interface decouples the application from the underlying
-database, making it straightforward to target SQLite today and another SQL
-backend later without changing the API surface.
+The abstract ``Store`` interface decouples the application from the
+underlying database.  The concrete ``SQLAlchemyStore`` targets any database
+supported by SQLAlchemy 2.x — SQLite (default), PostgreSQL, and DuckDB (via
+``duckdb-engine``) are the primary targets.
+
+Connection URL examples
+-----------------------
+SQLite (file):     sqlite:///links.sqlite
+SQLite (memory):   sqlite:///:memory:
+PostgreSQL:        postgresql+psycopg2://user:pass@host/dbname
+DuckDB (file):     duckdb:///links.duckdb
+DuckDB (memory):   duckdb:///:memory:
 """
 
 from __future__ import annotations
 
 import abc
-import json
-import sqlite3
-import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import (
+    JSON,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    MetaData,
+    String,
+    Table,
+    create_engine,
+    delete,
+    event,
+    insert,
+    select,
+    update,
+)
+from sqlalchemy.engine import Engine
+from sqlalchemy.pool import StaticPool
 
 # ---------------------------------------------------------------------------
 # Data records
@@ -118,110 +142,113 @@ class Store(abc.ABC):
 
 
 # ---------------------------------------------------------------------------
-# SQLite implementation
+# SQLAlchemy schema
 # ---------------------------------------------------------------------------
 
-_SCHEMA_SQL = """
-PRAGMA foreign_keys = ON;
+_metadata = MetaData()
 
-CREATE TABLE IF NOT EXISTS entities (
-    id          TEXT PRIMARY KEY,
-    entity_type TEXT NOT NULL,
-    name        TEXT NOT NULL,
-    uri         TEXT,
-    properties  TEXT NOT NULL,
-    created_at  TEXT NOT NULL
-);
+_entities = Table(
+    "entities",
+    _metadata,
+    Column("id", String, primary_key=True),
+    Column("entity_type", String, nullable=False),
+    Column("name", String, nullable=False),
+    Column("uri", String, nullable=True),
+    Column("properties", JSON, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Index("entities_type_created_idx", "entity_type", "created_at"),
+    Index("entities_uri_idx", "uri"),
+)
 
-CREATE INDEX IF NOT EXISTS entities_uri_idx ON entities (uri);
-
-CREATE TABLE IF NOT EXISTS links (
-    id          TEXT PRIMARY KEY,
-    subject_id  TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-    predicate   TEXT NOT NULL,
-    object_id   TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-    properties  TEXT NOT NULL,
-    created_at  TEXT NOT NULL
-);
-
--- Compound indexes cover the multi-field combinations used by find_links.
--- The leading columns also satisfy single-field queries, so no single-column
--- indexes are needed for subject_id, predicate, or object_id.
-CREATE INDEX IF NOT EXISTS entities_type_created_idx
-    ON entities (entity_type, created_at);
-
-CREATE INDEX IF NOT EXISTS links_subject_predicate_idx
-    ON links (subject_id, predicate);
-
-CREATE INDEX IF NOT EXISTS links_predicate_object_idx
-    ON links (predicate, object_id);
-
--- Covering index for exact (subject, predicate, object) triple lookups.
-CREATE INDEX IF NOT EXISTS links_triple_idx
-    ON links (subject_id, predicate, object_id);
-"""
+_links = Table(
+    "links",
+    _metadata,
+    Column("id", String, primary_key=True),
+    Column("subject_id", String, ForeignKey("entities.id", ondelete="CASCADE"), nullable=False),
+    Column("predicate", String, nullable=False),
+    Column("object_id", String, ForeignKey("entities.id", ondelete="CASCADE"), nullable=False),
+    Column("properties", JSON, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Index("links_subject_predicate_idx", "subject_id", "predicate"),
+    Index("links_predicate_object_idx", "predicate", "object_id"),
+    Index("links_triple_idx", "subject_id", "predicate", "object_id"),
+)
 
 
-class SQLiteStore(Store):
+def _make_engine(db_url: str) -> Engine:
+    """Create a SQLAlchemy engine from a URL, applying dialect-specific tuning."""
+    is_sqlite = db_url.startswith("sqlite")
+    is_memory = ":memory:" in db_url
+
+    kwargs: dict = {}
+    if is_sqlite:
+        kwargs["connect_args"] = {"check_same_thread": False}
+    if is_memory:
+        kwargs["poolclass"] = StaticPool
+
+    engine = create_engine(db_url, **kwargs)
+
+    if is_sqlite:
+        # Enable foreign-key enforcement for every new SQLite connection.
+        @event.listens_for(engine, "connect")
+        def _set_sqlite_pragma(conn, _record):
+            conn.execute("PRAGMA foreign_keys=ON")
+
+    return engine
+
+
+def _url_from_path(db_path: str) -> str:
+    """Convert a plain file path / ':memory:' to a sqlite:// URL."""
+    if "://" in db_path:
+        return db_path
+    if db_path == ":memory:":
+        return "sqlite:///:memory:"
+    return f"sqlite:///{db_path}"
+
+
+# ---------------------------------------------------------------------------
+# SQLAlchemy implementation
+# ---------------------------------------------------------------------------
+
+
+class SQLAlchemyStore(Store):
     """
-    SQLite-backed store.
+    Database-agnostic store backed by SQLAlchemy Core.
 
-    A single connection is shared across the process with a lock around all
-    operations so FastAPI worker threads do not race each other.
+    ``db_url`` may be any SQLAlchemy connection URL.  For convenience,
+    plain file paths and ``':memory:'`` are auto-converted to
+    ``sqlite:///…`` / ``sqlite:///:memory:``.
     """
 
-    def __init__(self, db_path: str = ":memory:") -> None:
-        self._conn = sqlite3.connect(db_path, check_same_thread=False, isolation_level=None)
-        self._lock = threading.Lock()
-        self._init_schema()
-
-    # ------------------------------------------------------------------
-    # Setup
-    # ------------------------------------------------------------------
-
-    def _init_schema(self) -> None:
-        with self._lock:
-            self._conn.executescript(_SCHEMA_SQL)
-            # Migrate pre-uri databases: add the column if it doesn't exist yet.
-            cols = {row[1] for row in self._conn.execute("PRAGMA table_info(entities)")}
-            if "uri" not in cols:
-                self._conn.execute("ALTER TABLE entities ADD COLUMN uri TEXT")
+    def __init__(self, db_url: str = ":memory:") -> None:
+        self._engine: Engine = _make_engine(_url_from_path(db_url))
+        _metadata.create_all(self._engine)
 
     # ------------------------------------------------------------------
     # Row conversion helpers
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse_timestamp(value: str) -> datetime:
-        return datetime.fromisoformat(value)
-
-    @classmethod
-    def _to_entity(cls, row: tuple) -> EntityRecord:
-        id_, entity_type, name, uri, properties, created_at = row
+    def _to_entity(row) -> EntityRecord:
         return EntityRecord(
-            id=id_,
-            entity_type=entity_type,
-            name=name,
-            uri=uri,
-            properties=json.loads(properties) if properties else {},
-            created_at=cls._parse_timestamp(created_at),
-        )
-
-    @classmethod
-    def _to_link(cls, row: tuple) -> LinkRecord:
-        id_, subject_id, predicate, object_id, properties, created_at = row
-        return LinkRecord(
-            id=id_,
-            subject_id=subject_id,
-            predicate=predicate,
-            object_id=object_id,
-            properties=json.loads(properties) if properties else {},
-            created_at=cls._parse_timestamp(created_at),
+            id=row.id,
+            entity_type=row.entity_type,
+            name=row.name,
+            uri=row.uri,
+            properties=row.properties or {},
+            created_at=row.created_at,
         )
 
     @staticmethod
-    def _timestamp_now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+    def _to_link(row) -> LinkRecord:
+        return LinkRecord(
+            id=row.id,
+            subject_id=row.subject_id,
+            predicate=row.predicate,
+            object_id=row.object_id,
+            properties=row.properties or {},
+            created_at=row.created_at,
+        )
 
     # ------------------------------------------------------------------
     # Entity operations
@@ -235,28 +262,24 @@ class SQLiteStore(Store):
         properties: Optional[dict] = None,
     ) -> EntityRecord:
         id_ = str(uuid.uuid4())
-        created_at = self._timestamp_now()
-        props_json = json.dumps(properties or {})
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO entities (id, entity_type, name, uri, properties, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                [id_, entity_type, name, uri, props_json, created_at],
+        now = datetime.now(timezone.utc)
+        with self._engine.begin() as conn:
+            conn.execute(
+                insert(_entities).values(
+                    id=id_,
+                    entity_type=entity_type,
+                    name=name,
+                    uri=uri,
+                    properties=properties or {},
+                    created_at=now,
+                )
             )
-            row = self._conn.execute(
-                "SELECT id, entity_type, name, uri, properties, created_at "
-                "FROM entities WHERE id = ?",
-                [id_],
-            ).fetchone()
+            row = conn.execute(select(_entities).where(_entities.c.id == id_)).one()
         return self._to_entity(row)
 
     def get_entity(self, id: str) -> Optional[EntityRecord]:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT id, entity_type, name, uri, properties, created_at "
-                "FROM entities WHERE id = ?",
-                [id],
-            ).fetchone()
+        with self._engine.connect() as conn:
+            row = conn.execute(select(_entities).where(_entities.c.id == id)).one_or_none()
         return self._to_entity(row) if row else None
 
     def list_entities(
@@ -265,26 +288,17 @@ class SQLiteStore(Store):
         limit: int = 100,
         offset: int = 0,
     ) -> list[EntityRecord]:
-        with self._lock:
-            if entity_type:
-                rows = self._conn.execute(
-                    "SELECT id, entity_type, name, uri, properties, created_at "
-                    "FROM entities WHERE entity_type = ? "
-                    "ORDER BY created_at LIMIT ? OFFSET ?",
-                    [entity_type, limit, offset],
-                ).fetchall()
-            else:
-                rows = self._conn.execute(
-                    "SELECT id, entity_type, name, uri, properties, created_at "
-                    "FROM entities ORDER BY created_at LIMIT ? OFFSET ?",
-                    [limit, offset],
-                ).fetchall()
+        stmt = select(_entities).order_by(_entities.c.created_at).limit(limit).offset(offset)
+        if entity_type is not None:
+            stmt = stmt.where(_entities.c.entity_type == entity_type)
+        with self._engine.connect() as conn:
+            rows = conn.execute(stmt).all()
         return [self._to_entity(r) for r in rows]
 
     def delete_entity(self, id: str) -> bool:
-        with self._lock:
-            cursor = self._conn.execute("DELETE FROM entities WHERE id = ?", [id])
-        return cursor.rowcount > 0
+        with self._engine.begin() as conn:
+            result = conn.execute(delete(_entities).where(_entities.c.id == id))
+        return result.rowcount > 0
 
     def update_entity(
         self,
@@ -293,27 +307,17 @@ class SQLiteStore(Store):
         uri: Optional[str] = None,
         entity_type: Optional[str] = None,
     ) -> Optional[EntityRecord]:
-        fields, params = [], []
+        values: dict = {}
         if name is not None:
-            fields.append("name = ?")
-            params.append(name)
+            values["name"] = name
         if uri is not None:
-            fields.append("uri = ?")
-            params.append(uri)
+            values["uri"] = uri
         if entity_type is not None:
-            fields.append("entity_type = ?")
-            params.append(entity_type)
-        if not fields:
-            return self.get_entity(id)
-        params.append(id)
-        with self._lock:
-            self._conn.execute(
-                f"UPDATE entities SET {', '.join(fields)} WHERE id = ?", params
-            )
-            row = self._conn.execute(
-                "SELECT id, entity_type, name, uri, properties, created_at FROM entities WHERE id = ?",
-                [id],
-            ).fetchone()
+            values["entity_type"] = entity_type
+        with self._engine.begin() as conn:
+            if values:
+                conn.execute(update(_entities).where(_entities.c.id == id).values(**values))
+            row = conn.execute(select(_entities).where(_entities.c.id == id)).one_or_none()
         return self._to_entity(row) if row else None
 
     # ------------------------------------------------------------------
@@ -333,28 +337,24 @@ class SQLiteStore(Store):
             raise ValueError(f"Object entity '{object_id}' not found")
 
         id_ = str(uuid.uuid4())
-        created_at = self._timestamp_now()
-        props_json = json.dumps(properties or {})
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO links (id, subject_id, predicate, object_id, properties, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                [id_, subject_id, predicate, object_id, props_json, created_at],
+        now = datetime.now(timezone.utc)
+        with self._engine.begin() as conn:
+            conn.execute(
+                insert(_links).values(
+                    id=id_,
+                    subject_id=subject_id,
+                    predicate=predicate,
+                    object_id=object_id,
+                    properties=properties or {},
+                    created_at=now,
+                )
             )
-            row = self._conn.execute(
-                "SELECT id, subject_id, predicate, object_id, properties, created_at "
-                "FROM links WHERE id = ?",
-                [id_],
-            ).fetchone()
+            row = conn.execute(select(_links).where(_links.c.id == id_)).one()
         return self._to_link(row)
 
     def get_link(self, id: str) -> Optional[LinkRecord]:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT id, subject_id, predicate, object_id, properties, created_at "
-                "FROM links WHERE id = ?",
-                [id],
-            ).fetchone()
+        with self._engine.connect() as conn:
+            row = conn.execute(select(_links).where(_links.c.id == id)).one_or_none()
         return self._to_link(row) if row else None
 
     def find_links(
@@ -365,45 +365,32 @@ class SQLiteStore(Store):
         limit: int = 100,
         offset: int = 0,
     ) -> list[LinkRecord]:
-        conditions: list[str] = []
-        params: list[str | int] = []
+        stmt = select(_links).order_by(_links.c.created_at).limit(limit).offset(offset)
         if subject_id is not None:
-            conditions.append("subject_id = ?")
-            params.append(subject_id)
+            stmt = stmt.where(_links.c.subject_id == subject_id)
         if predicate is not None:
-            conditions.append("predicate = ?")
-            params.append(predicate)
+            stmt = stmt.where(_links.c.predicate == predicate)
         if object_id is not None:
-            conditions.append("object_id = ?")
-            params.append(object_id)
-
-        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-        params.extend([limit, offset])
-
-        with self._lock:
-            rows = self._conn.execute(
-                f"SELECT id, subject_id, predicate, object_id, properties, created_at "
-                f"FROM links {where} ORDER BY created_at LIMIT ? OFFSET ?",
-                params,
-            ).fetchall()
+            stmt = stmt.where(_links.c.object_id == object_id)
+        with self._engine.connect() as conn:
+            rows = conn.execute(stmt).all()
         return [self._to_link(r) for r in rows]
 
     def delete_link(self, id: str) -> bool:
-        with self._lock:
-            cursor = self._conn.execute("DELETE FROM links WHERE id = ?", [id])
-        return cursor.rowcount > 0
+        with self._engine.begin() as conn:
+            result = conn.execute(delete(_links).where(_links.c.id == id))
+        return result.rowcount > 0
 
     def update_link(self, id: str, predicate: str) -> Optional[LinkRecord]:
-        with self._lock:
-            self._conn.execute("UPDATE links SET predicate = ? WHERE id = ?", [predicate, id])
-            row = self._conn.execute(
-                "SELECT id, subject_id, predicate, object_id, properties, created_at FROM links WHERE id = ?",
-                [id],
-            ).fetchone()
+        with self._engine.begin() as conn:
+            conn.execute(update(_links).where(_links.c.id == id).values(predicate=predicate))
+            row = conn.execute(select(_links).where(_links.c.id == id)).one_or_none()
         return self._to_link(row) if row else None
 
     def close(self) -> None:
-        self._conn.close()
+        self._engine.dispose()
 
 
-DuckDBStore = SQLiteStore
+# Backward-compatible aliases
+SQLiteStore = SQLAlchemyStore
+DuckDBStore = SQLAlchemyStore

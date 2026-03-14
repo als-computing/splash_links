@@ -182,6 +182,45 @@ class TestSQLiteStore:
         assert store.get_link(lnk.id) is None
         assert store.delete_link(lnk.id) is False  # already gone
 
+    def test_update_entity_name(self, store):
+        e = store.create_entity("Dataset", "original")
+        updated = store.update_entity(e.id, name="renamed")
+        assert updated is not None
+        assert updated.name == "renamed"
+        assert updated.entity_type == "Dataset"
+
+    def test_update_entity_type(self, store):
+        e = store.create_entity("Dataset", "A")
+        updated = store.update_entity(e.id, entity_type="Sample")
+        assert updated is not None
+        assert updated.entity_type == "Sample"
+
+    def test_update_entity_uri(self, store):
+        e = store.create_entity("Dataset", "A")
+        updated = store.update_entity(e.id, uri="https://example.com/data")
+        assert updated is not None
+        assert updated.uri == "https://example.com/data"
+
+    def test_update_entity_no_fields_returns_entity(self, store):
+        e = store.create_entity("Dataset", "A")
+        result = store.update_entity(e.id)
+        assert result is not None
+        assert result.id == e.id
+
+    def test_update_entity_not_found(self, store):
+        assert store.update_entity("ghost") is None
+
+    def test_update_link_predicate(self, store):
+        e1 = store.create_entity("A", "a")
+        e2 = store.create_entity("B", "b")
+        lnk = store.create_link(e1.id, "produced", e2.id)
+        updated = store.update_link(lnk.id, "consumed")
+        assert updated is not None
+        assert updated.predicate == "consumed"
+
+    def test_update_link_not_found(self, store):
+        assert store.update_link("ghost", "anything") is None
+
 
 # ---------------------------------------------------------------------------
 # GraphQL integration tests (via HTTP)
@@ -218,7 +257,7 @@ class TestGraphQL:
     def test_query_entity_not_found(self, client):
         result = gql(
             client,
-            "{ entity(id: \"00000000-0000-0000-0000-000000000000\") { id } }",
+            '{ entity(id: "00000000-0000-0000-0000-000000000000") { id } }',
         )
         assert result["entity"] is None
 
@@ -226,7 +265,7 @@ class TestGraphQL:
         for i in range(3):
             gql(client, CREATE_ENTITY, {"input": {"entityType": "Sample", "name": f"s-{i}"}})
 
-        data = gql(client, "{ entities(entityType: \"Sample\") { id name } }")
+        data = gql(client, '{ entities(entityType: "Sample") { id name } }')
         assert len(data["entities"]) == 3
 
     def test_create_and_traverse_link(self, client):
@@ -272,7 +311,7 @@ class TestGraphQL:
         gql(client, CREATE_LINK, {"input": {"subjectId": e1["id"], "predicate": "likes", "objectId": e2["id"]}})
         gql(client, CREATE_LINK, {"input": {"subjectId": e1["id"], "predicate": "hates", "objectId": e2["id"]}})
 
-        likes = gql(client, "{ links(predicate: \"likes\") { id predicate } }")["links"]
+        likes = gql(client, '{ links(predicate: "likes") { id predicate } }')["links"]
         assert len(likes) == 1
         assert likes[0]["predicate"] == "likes"
 
@@ -306,3 +345,45 @@ class TestGraphQL:
         # Entities still exist
         still_there = gql(client, "query Q($id: ID!) { entity(id: $id) { id } }", {"id": e1["id"]})
         assert still_there["entity"] is not None
+
+    def test_update_entity_mutation(self, client):
+        e = gql(client, CREATE_ENTITY, {"input": {"entityType": "A", "name": "old"}})["createEntity"]
+        data = gql(
+            client,
+            """mutation U($id: ID!, $input: UpdateEntityInput!) {
+                updateEntity(id: $id, input: $input) { id name entityType }
+            }""",
+            {"id": e["id"], "input": {"name": "new", "entityType": "B"}},
+        )
+        assert data["updateEntity"]["name"] == "new"
+        assert data["updateEntity"]["entityType"] == "B"
+
+    def test_update_entity_not_found_returns_null(self, client):
+        data = gql(
+            client,
+            'mutation { updateEntity(id: "00000000-0000-0000-0000-000000000000", input: { name: "x" }) { id } }',
+        )
+        assert data["updateEntity"] is None
+
+    def test_update_link_mutation(self, client):
+        e1 = gql(client, CREATE_ENTITY, {"input": {"entityType": "A", "name": "a"}})["createEntity"]
+        e2 = gql(client, CREATE_ENTITY, {"input": {"entityType": "B", "name": "b"}})["createEntity"]
+        lnk = gql(
+            client, CREATE_LINK, {"input": {"subjectId": e1["id"], "predicate": "old", "objectId": e2["id"]}}
+        )["createLink"]
+        data = gql(
+            client,
+            """mutation U($id: ID!, $input: UpdateLinkInput!) {
+                updateLink(id: $id, input: $input) { id predicate }
+            }""",
+            {"id": lnk["id"], "input": {"predicate": "new"}},
+        )
+        assert data["updateLink"]["predicate"] == "new"
+
+    def test_update_link_not_found_returns_null(self, client):
+        data = gql(
+            client,
+            'mutation { updateLink(id: "00000000-0000-0000-0000-000000000000",'
+            ' input: { predicate: "x" }) { id } }',
+        )
+        assert data["updateLink"] is None

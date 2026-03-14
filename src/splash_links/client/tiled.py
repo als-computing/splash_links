@@ -8,6 +8,7 @@ identifier.  Entities are created automatically on first encounter and cached
 for the lifetime of the :class:`~splash_links.client.base.LinksClient`
 instance.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -25,8 +26,7 @@ def _node_uri(node: Any) -> str:
     if hasattr(node, "uri"):
         return str(node.uri)
     raise TypeError(
-        f"Cannot extract a URI from {type(node)!r}. "
-        "Expected a tiled client node with a '.uri' attribute."
+        f"Cannot extract a URI from {type(node)!r}. Expected a tiled client node with a '.uri' attribute."
     )
 
 

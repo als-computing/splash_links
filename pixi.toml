@@ -46,6 +46,7 @@ docs    = "mkdocs serve -f mkdocs/mkdocs.yml"
 db      = "splash-links shell"
 entities = "splash-links entities"
 links   = "splash-links links"
+migrate = "alembic upgrade head"
 frontend-install = "npm install --prefix frontend"
 frontend-dev  = { cmd = "npm run dev --prefix frontend", depends-on = ["frontend-install"] }
 frontend-build = { cmd = "npm run build --prefix frontend", depends-on = ["frontend-install"] }

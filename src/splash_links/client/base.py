@@ -11,6 +11,7 @@ Usage::
     link = links.create_link(entity, "processed_from", entity2)
     links.find_links(entity)  # all links involving entity
 """
+
 from __future__ import annotations
 
 from typing import Any, Optional
@@ -254,8 +255,5 @@ def from_uri(uri: str) -> LinksClient:
     elif parsed.scheme in ("http", "https"):
         base_url = f"{parsed.scheme}://{parsed.netloc}"
     else:
-        raise ValueError(
-            f"Unsupported URI scheme {parsed.scheme!r}. "
-            "Use 'splash://', 'http://', or 'https://'."
-        )
+        raise ValueError(f"Unsupported URI scheme {parsed.scheme!r}. Use 'splash://', 'http://', or 'https://'.")
     return LinksClient(base_url)

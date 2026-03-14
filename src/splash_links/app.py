@@ -13,6 +13,7 @@ The GraphQL playground is available at /graphql when the app is running.
 
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Optional
@@ -22,7 +23,44 @@ from fastapi.staticfiles import StaticFiles
 from strawberry.fastapi import GraphQLRouter
 
 from .schema import schema
-from .store import SQLiteStore, Store
+from .store import SQLiteStore, Store, _make_engine, _url_from_path
+
+logger = logging.getLogger(__name__)
+
+
+def _run_migrations(db_url: str) -> None:
+    """Stamp existing DBs and apply all pending Alembic migrations.
+
+    Skipped for in-memory databases — they always start fresh and
+    ``create_all`` inside ``SQLAlchemyStore.__init__`` is sufficient.
+    """
+    if ":memory:" in db_url:
+        return
+
+    from alembic.config import Config
+    from sqlalchemy import inspect as sa_inspect
+
+    from alembic import command
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    ini_path = os.path.normpath(os.path.join(here, "..", "..", "..", "alembic.ini"))
+
+    alembic_cfg = Config(ini_path)
+    alembic_cfg.set_main_option("sqlalchemy.url", db_url)
+
+    engine = _make_engine(db_url)
+    try:
+        inspector = sa_inspect(engine)
+        tables = inspector.get_table_names()
+        if "entities" in tables and "alembic_version" not in tables:
+            logger.info("Pre-alembic database detected — stamping as head")
+            command.stamp(alembic_cfg, "head")
+    finally:
+        engine.dispose()
+
+    logger.info("Applying database migrations")
+    command.upgrade(alembic_cfg, "head")
+    logger.info("Database migrations up to date")
 
 
 def create_app(db_path: Optional[str] = None) -> FastAPI:
@@ -38,11 +76,15 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-        store: Store = SQLiteStore(resolved_db_path)
+        db_url = _url_from_path(resolved_db_path)
+        logger.info("Starting splash-links with database: %s", db_url)
+        _run_migrations(db_url)
+        store: Store = SQLiteStore(db_url)
         app.state.store = store
         try:
             yield
         finally:
+            logger.info("Shutting down splash-links")
             store.close()
 
     async def get_context(request: Request) -> dict:

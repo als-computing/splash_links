@@ -28,7 +28,7 @@ from .store import SQLiteStore
 
 app = typer.Typer(help="Splash-links command line tools.")
 app.add_typer(client_app, name="client", help="Interact with the GraphQL service via the HTTP client.")
-console = Console()
+console = Console(width=120)
 
 
 def _db_path() -> str:
@@ -108,10 +108,10 @@ def links(
     for lnk in rows:
         props = json.dumps(lnk.properties) if lnk.properties else ""
         table.add_row(
-            lnk.id,
-            lnk.subject_id,
+            lnk.id[:8],
+            lnk.subject_id[:8],
             lnk.predicate,
-            lnk.object_id,
+            lnk.object_id[:8],
             props,
             lnk.created_at.isoformat(timespec="seconds"),
         )
