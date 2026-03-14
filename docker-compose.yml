@@ -2,8 +2,8 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: splash_links
-      POSTGRES_PASSWORD: splash_links
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: splash_links
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -12,6 +12,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    ports:
+      - "127.0.0.1:5432:5432"
 
   splash_links:
     build:
@@ -20,7 +22,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      SPLASH_LINKS_DB: "postgresql+psycopg2://splash_links:splash_links@postgres/splash_links"
+      SPLASH_LINKS_DB: "postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/splash_links"
     depends_on:
       postgres:
         condition: service_healthy

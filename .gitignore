@@ -147,3 +147,5 @@ sfapi_training.json
 *.sqlite3
 
 *node_modules/
+examples/testing.ipynb
+.env
