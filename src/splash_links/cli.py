@@ -143,8 +143,9 @@ def shell() -> None:
         joined = " ".join(buf)
         if joined.rstrip().endswith(";"):
             try:
-                result = conn.execute(joined).fetchall()
-                desc = conn.description
+                cursor = conn.execute(joined)
+                result = cursor.fetchall()
+                desc = cursor.description
                 if desc:
                     t = Table(box=box.SIMPLE_HEAVY)
                     for col in desc:
