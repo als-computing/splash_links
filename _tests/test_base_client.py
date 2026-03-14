@@ -5,7 +5,7 @@ import pytest
 from splash_links.client import base as base_module
 from splash_links.client import tiled as tiled_module
 from splash_links.client.base import Entity, LinksClient, from_uri
-from splash_links.client.tiled import _node_name, _node_uri
+from splash_links.client.tiled import TiledEntity, _node_name, _node_properties, _node_uri, from_entity
 from splash_links.client.tiled import get_or_create_entity as tiled_get_or_create
 
 
@@ -265,3 +265,214 @@ def test_get_or_create_entity_creates_and_caches(monkeypatch):
     result = tiled_get_or_create(client, Node())
     assert result.id == "ent-new"
     assert "https://tiled.example.com/new-node" in client._tiled_cache
+
+
+# ---------------------------------------------------------------------------
+# _node_properties
+# ---------------------------------------------------------------------------
+
+
+def test_node_properties_captures_specs_and_structure_family():
+    class Spec:
+        name = "XDI"
+
+    class Node:
+        uri = "http://tiled.example.com/api/v1/metadata/exp/run42"
+        specs = [Spec()]
+        item = {"attributes": {"structure_family": "array"}}
+
+    props = _node_properties(Node())
+    assert props["specs"] == ["XDI"]
+    assert props["structure_family"] == "array"
+
+
+def test_node_properties_tolerates_missing_optional_attrs():
+    class Node:
+        # no specs, no item
+        pass
+
+    props = _node_properties(Node())
+    assert "specs" not in props
+    assert "structure_family" not in props
+
+
+def test_get_or_create_entity_passes_tiled_properties(monkeypatch):
+    client = LinksClient("http://example.com")
+    captured: dict = {}
+
+    def fake_execute(query: str, variables: dict | None = None) -> dict:
+        captured["variables"] = variables
+        return {
+            "createEntity": {
+                "id": "ent-new",
+                "entityType": "tiled",
+                "name": "run42",
+                "properties": variables["input"]["properties"],
+                "createdAt": "2026-01-01T00:00:00Z",
+                "uri": "http://tiled.example.com/api/v1/metadata/exp/run42",
+            }
+        }
+
+    monkeypatch.setattr(client, "_execute", fake_execute)
+
+    class Spec:
+        name = "XDI"
+
+    class Node:
+        uri = "http://tiled.example.com/api/v1/metadata/exp/run42"
+        key = "run42"
+        specs = [Spec()]
+        item = {"attributes": {"structure_family": "array"}}
+
+    result = tiled_get_or_create(client, Node())
+    assert result.id == "ent-new"
+    props = captured["variables"]["input"]["properties"]
+    assert props["specs"] == ["XDI"]
+    assert props["structure_family"] == "array"
+
+
+# ---------------------------------------------------------------------------
+# from_entity
+# ---------------------------------------------------------------------------
+
+
+def test_from_entity_uses_entity_uri(monkeypatch):
+    import sys
+    import types
+
+    connected_uri: list = []
+
+    class FakeNode:
+        pass
+
+    root_node = FakeNode()
+    fake_tiled_client = types.ModuleType("tiled.client")
+    fake_tiled_client.from_uri = lambda url: (connected_uri.append(url), root_node)[1]
+    fake_tiled = types.ModuleType("tiled")
+    fake_tiled.client = fake_tiled_client
+    monkeypatch.setitem(sys.modules, "tiled", fake_tiled)
+    monkeypatch.setitem(sys.modules, "tiled.client", fake_tiled_client)
+
+    entity = Entity(
+        id="ent-1",
+        entity_type="tiled",
+        name="run42",
+        uri="http://tiled.example.com/api/v1/metadata/exp/run42",
+        properties={},  # no tiled_server_url
+        created_at="2026-01-01T00:00:00Z",
+    )
+
+    result = from_entity(entity)
+    assert result is root_node
+    assert connected_uri == ["http://tiled.example.com/api/v1/metadata/exp/run42"]
+
+
+def test_from_entity_raises_when_no_uri_or_server_url(monkeypatch):
+    import sys
+    import types
+
+    fake_tiled_client = types.ModuleType("tiled.client")
+    fake_tiled_client.from_uri = lambda url: None  # won't be reached
+    fake_tiled = types.ModuleType("tiled")
+    fake_tiled.client = fake_tiled_client
+    monkeypatch.setitem(sys.modules, "tiled", fake_tiled)
+    monkeypatch.setitem(sys.modules, "tiled.client", fake_tiled_client)
+
+    entity = Entity(
+        id="ent-orphan",
+        entity_type="tiled",
+        name="orphan",
+        uri=None,
+        properties={},
+        created_at="2026-01-01T00:00:00Z",
+    )
+
+    with pytest.raises(ValueError, match="cannot reconnect"):
+        from_entity(entity)
+
+
+# ---------------------------------------------------------------------------
+# TiledEntity dispatcher
+# ---------------------------------------------------------------------------
+
+
+def test_entity_from_dict_returns_tiled_entity_for_tiled_type():
+    d = {
+        "id": "ent-1",
+        "entityType": "tiled",
+        "name": "run42",
+        "uri": "http://tiled.example.com/api/v1/metadata/exp/run42",
+        "properties": {"tiled_server_url": "http://tiled.example.com", "tiled_path": ["exp", "run42"]},
+        "createdAt": "2026-01-01T00:00:00Z",
+    }
+    from splash_links.client.base import _entity_from_dict
+
+    result = _entity_from_dict(d)
+    assert isinstance(result, TiledEntity)
+    assert result.id == "ent-1"
+
+
+def test_entity_from_dict_returns_plain_entity_for_other_types():
+    d = {
+        "id": "ent-2",
+        "entityType": "Sample",
+        "name": "my sample",
+        "uri": None,
+        "properties": None,
+        "createdAt": "2026-01-01T00:00:00Z",
+    }
+    from splash_links.client.base import _entity_from_dict
+
+    result = _entity_from_dict(d)
+    assert type(result) is Entity
+    assert result.id == "ent-2"
+
+
+def test_get_or_create_entity_returns_tiled_entity(monkeypatch):
+    """create_entity goes through _entity_from_dict, so tiled entities come back as TiledEntity."""
+    client = LinksClient("http://example.com")
+
+    def fake_execute(query: str, variables: dict | None = None) -> dict:
+        return {
+            "createEntity": {
+                "id": "ent-new",
+                "entityType": "tiled",
+                "name": "run42",
+                "uri": "http://tiled.example.com/api/v1/metadata/exp/run42",
+                "properties": {"tiled_server_url": "http://tiled.example.com", "tiled_path": ["exp", "run42"]},
+                "createdAt": "2026-01-01T00:00:00Z",
+            }
+        }
+
+    monkeypatch.setattr(client, "_execute", fake_execute)
+
+    class Node:
+        uri = "http://tiled.example.com/api/v1/metadata/exp/run42"
+        key = "run42"
+        specs = []
+
+    result = tiled_get_or_create(client, Node())
+    assert isinstance(result, TiledEntity)
+
+
+def test_tiled_entity_node_calls_from_entity(monkeypatch):
+    import sys
+    import types
+
+    fake_node = object()
+    fake_tiled_client = types.ModuleType("tiled.client")
+    fake_tiled_client.from_uri = lambda url: fake_node
+    fake_tiled = types.ModuleType("tiled")
+    fake_tiled.client = fake_tiled_client
+    monkeypatch.setitem(sys.modules, "tiled", fake_tiled)
+    monkeypatch.setitem(sys.modules, "tiled.client", fake_tiled_client)
+
+    entity = TiledEntity(
+        id="ent-1",
+        entity_type="tiled",
+        name="run42",
+        uri="http://tiled.example.com/api/v1/metadata/exp/run42",
+        properties={"tiled_server_url": "http://tiled.example.com", "tiled_path": []},
+        created_at="2026-01-01T00:00:00Z",
+    )
+    assert entity.node() is fake_node

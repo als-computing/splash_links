@@ -84,6 +84,11 @@ query FindLinks($subjectId: ID, $objectId: ID, $predicate: String, $limit: Int, 
 
 
 def _entity_from_dict(d: dict) -> Entity:
+    """Deserialise an entity dict, upgrading to a subclass when appropriate."""
+    if d.get("entityType") == "tiled":
+        from .tiled import TiledEntity  # noqa: PLC0415
+
+        return TiledEntity.model_validate(d)
     return Entity.model_validate(d)
 
 
