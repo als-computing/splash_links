@@ -23,7 +23,8 @@ from fastapi.staticfiles import StaticFiles
 from strawberry.fastapi import GraphQLRouter
 
 from .schema import schema
-from .store import SQLiteStore, Store, _make_engine, _url_from_path
+from .store import SQLAlchemyStore as SQLiteStore
+from .store import Store, _make_engine, _url_from_path
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,6 @@ def _run_migrations(db_url: str) -> None:
         return
 
     from alembic.config import Config
-    from sqlalchemy import text
 
     from alembic import command
 
@@ -53,12 +53,14 @@ def _run_migrations(db_url: str) -> None:
     alembic_cfg.set_main_option("sqlalchemy.url", db_url)
 
     # Use a context manager so the connection is definitely closed and the
-    # SQLite write lock released before alembic opens its own connection.
+    # write lock released before alembic opens its own connection.
     engine = _make_engine(db_url)
     try:
         with engine.connect() as conn:
-            tables = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).scalars().all()
-            if "entities" in tables and "alembic_version" not in tables:
+            from sqlalchemy import inspect as sa_inspect
+
+            table_names = sa_inspect(conn).get_table_names()
+            if "entities" in table_names and "alembic_version" not in table_names:
                 logger.info("Pre-alembic database detected — stamping as head")
                 command.stamp(alembic_cfg, "head")
     finally:

@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: splash_links
+      POSTGRES_PASSWORD: splash_links
+      POSTGRES_DB: splash_links
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U splash_links -d splash_links"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  splash_links:
+    build:
+      context: .
+      dockerfile: Containerfile
+    ports:
+      - "8080:8080"
+    environment:
+      SPLASH_LINKS_DB: "postgresql+psycopg2://splash_links:splash_links@postgres/splash_links"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  # in podman, expect ~/.local/share/containers/storage/volumes/splash_links_pgdata/
+  pgdata:

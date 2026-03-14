@@ -2,7 +2,9 @@
 
 A FastAPI service for storing and querying directed, predicate-labeled relationships between arbitrary entities — like a lightweight triplestore, without SPARQL.
 
-Relationships are stored in [SQLite](https://sqlite.org/) and exposed through a [GraphQL](https://graphql.org/) API built with [Strawberry](https://strawberry.rocks/).
+Relationships are stored in a SQL database (SQLite by default, PostgreSQL for production) and exposed through a [GraphQL](https://graphql.org/) API built with [Strawberry](https://strawberry.rocks/).
+
+This service stories any link with a `uri`. It is expected to work very well with Tiled.
 
 ## Concepts
 
@@ -236,11 +238,50 @@ pyproject.toml   — package metadata, ruff config, coverage config
 Dockerfile       — two-stage build (pixi build → debian:bookworm-slim runtime)
 ```
 
-### Storage and future backends
+### Database backends
 
-The `Store` ABC in `store.py` decouples the service from SQLite. To target Postgres or any other SQL backend later, implement the same interface and pass an instance to `create_app`. The database file path is controlled by the `SPLASH_LINKS_DB` environment variable.
+The service is built on SQLAlchemy 2.x and supports multiple backends. The active backend is selected by the `SPLASH_LINKS_DB` environment variable, which accepts any SQLAlchemy connection URL (or a plain file path / `:memory:` shorthand for SQLite).
+
+#### SQLite (recommended for local installations)
+
+SQLite is the default and the **recommended choice for most deployments**. It requires no external server, is trivially portable (a single file), and handles the read-heavy workloads typical of this service well.
+
+```bash
+SPLASH_LINKS_DB=links.sqlite pixi run serve
+# or a bare path — the service auto-converts it to sqlite:///…
+SPLASH_LINKS_DB=/data/links.sqlite pixi run serve
+```
+
+#### PostgreSQL (recommended for production / multi-user deployments)
+
+Use PostgreSQL when you need concurrent writes, role-based access control, or want to run the service behind a load balancer. A `docker-compose.yml` is provided that starts a Postgres instance alongside the application:
+
+```bash
+docker compose up --build
+```
+
+Supply an explicit URL for an external Postgres cluster:
+
+```bash
+SPLASH_LINKS_DB="postgresql+psycopg2://user:pass@host/dbname" pixi run serve
+```
+
+Alembic migrations are applied automatically on startup regardless of backend.
+
+#### DuckDB (experimental — performance testing only)
+
+DuckDB support is **experimental** and intended for comparing analytical query performance against SQLite, not for production use. It is not covered by the test suite and may have compatibility gaps.
+
+```bash
+SPLASH_LINKS_DB="duckdb:///links.duckdb" pixi run serve
+```
+
+| Backend | Use case | Status |
+|---------|----------|--------|
+| SQLite | Local / single-user installations | ✅ Recommended |
+| PostgreSQL | Production / multi-user deployments | ✅ Supported |
+| DuckDB | Analytical performance benchmarking | ⚠️ Experimental |
 
 ### CI
 
 GitHub Actions (`.github/workflows/build-app.yml`) runs lint and tests on every push and pull request to `main`. The test step enforces the 90% coverage requirement — the build fails if coverage drops below that threshold.
-
