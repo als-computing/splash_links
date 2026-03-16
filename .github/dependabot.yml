@@ -1,0 +1,47 @@
+version: 2
+updates:
+
+# Docker dependency updates (grouped into one PR)
+- package-ecosystem: "docker"
+  directory: "/" # Location of your Dockerfile
+  schedule:
+    interval: "weekly" # Check for updates weekly
+  groups:
+    all:
+      patterns:
+      - "*" # Match all Docker dependencies
+  labels:
+  - "dependencies"
+  - "docker"
+  commit-message:
+    prefix: "docker-deps" # Custom commit message prefix
+
+# GitHub Actions updates (grouped into one PR)
+- package-ecosystem: "github-actions"
+  directory: "/" # GitHub Actions workflows are auto-detected
+  schedule:
+    interval: "weekly" # Check for updates weekly
+  groups:
+    all:
+      patterns:
+      - "*" # Match all GitHub Actions dependencies
+  labels:
+  - "dependencies"
+  - "github-actions"
+  commit-message:
+    prefix: "actions" # Custom commit message prefix
+
+# Python dependency updates (grouped into one PR)
+- package-ecosystem: "pip"
+  directory: "/" # Location of requirements files
+  schedule:
+    interval: "weekly" # Check for updates weekly
+  groups:
+    all:
+      patterns:
+      - "*" # Match all dependencies
+  labels:
+  - "dependencies"
+  - "python"
+  commit-message:
+    prefix: "pip-deps" # Custom commit message prefix

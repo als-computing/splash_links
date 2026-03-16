@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "splash-links"
+version = "0.1.0"
+description = "Entity link graph service — store and query directional, predicate-labeled relationships via GraphQL backed by SQLite"
+requires-python = ">=3.11"
+dependencies = [
+    "alembic>=1.13.0",
+    "fastapi>=0.111.0",
+    "pydantic>=2.0.0",
+    "rich>=13.0.0",
+    "sqlalchemy>=2.0.0",
+    "psycopg2-binary>=2.9.0",
+    "strawberry-graphql[fastapi]>=0.236.0",
+    "typer>=0.12.0",
+    "uvicorn[standard]>=0.30.0",
+]
+
+[project.scripts]
+splash-links = "splash_links.cli:main"
+splash-links-client = "splash_links.client.cli:main"
+
+[tool.hatch.build.targets.wheel]
+# src layout: expose splash_links at the wheel root
+packages = ["src/splash_links"]
+
+[tool.ruff]
+line-length = 115
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["_tests"]
+
+[tool.coverage.run]
+source = ["splash_links"]
+omit = ["src/splash_links/main.py"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true

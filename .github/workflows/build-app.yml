@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up pixi
+      uses: prefix-dev/setup-pixi@v0.8.1
+      with:
+        pixi-version: v0.63.2
+        cache: true
+
+    - name: Lint
+      run: pixi run lint
+
+    - name: Test (≥90% coverage required)
+      run: pixi run test
+
+    - name: Build MkDocs site
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      run: pixi run docs build -f mkdocs/mkdocs.yml
+
+    - name: Update Readme Tree
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      run: pixi run python scripts/update_readme_tree.py

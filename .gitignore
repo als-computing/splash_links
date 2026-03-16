@@ -1,3 +1,20 @@
+# Editors
+.vscode/
+.idea/
+
+# Vagrant
+.vagrant/
+
+# Mac/OSX
+.DS_Store
+
+# pixi – commit pixi.lock but not the installed env
+.pixi/
+
+# Windows
+Thumbs.db
+
+# Source for the following rules: https://raw.githubusercontent.com/github/gitignore/master/Python.gitignore
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -20,8 +37,6 @@ parts/
 sdist/
 var/
 wheels/
-pip-wheel-metadata/
-share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -47,7 +62,6 @@ htmlcov/
 nosetests.xml
 coverage.xml
 *.cover
-*.py,cover
 .hypothesis/
 .pytest_cache/
 
@@ -59,7 +73,6 @@ coverage.xml
 *.log
 local_settings.py
 db.sqlite3
-db.sqlite3-journal
 
 # Flask stuff:
 instance/
@@ -84,34 +97,17 @@ ipython_config.py
 # pyenv
 .python-version
 
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
-
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow
-__pypackages__/
-
-# Celery stuff
+# celery beat schedule file
 celerybeat-schedule
-celerybeat.pid
 
 # SageMath parsed files
 *.sage.py
-
-# vscode
-.vscode/
-
-# PyCharm / JetBrains
-.idea/
 
 # Environments
 .env
 .venv
 env/
-venv*/
+venv/
 ENV/
 env.bak/
 venv.bak/
@@ -131,15 +127,25 @@ venv.bak/
 .dmypy.json
 dmypy.json
 
-# Pyre type checker
-.pyre/
-scratch/
+api_keys.yml
+users.yml
 
-.diagrams/
+splash_flows_globus/
+splash_auth/
 
-# a place to play
-.scratch/
+*-deployment.yaml
 
-data/
+# SFAPI keys
+clientid.txt
+priv_key.jwk
+priv_key.pem
+sfapi_training.json
 
-.ipynb_checkpoints/
+.ruff_cache/
+*.duckdb
+*.sqlite
+*.sqlite3
+
+*node_modules/
+examples/testing.ipynb
+.env

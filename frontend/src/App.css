@@ -1,0 +1,203 @@
+/* ── Finch uses Tailwind; we only need to style our own content ── */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+}
+
+/* ── Page wrapper inside Finch's main content area ── */
+.sl-page {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #f0f9ff; /* sky-50 */
+}
+
+.sl-error-banner {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-bottom: 1px solid #fecaca;
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+}
+
+.sl-error-banner span { font-weight: 700; }
+
+/* ── Three-panel row ── */
+.sl-panels {
+  display: flex;
+  gap: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.sl-panel {
+  width: 280px;
+  flex-shrink: 0;
+  background: #fff;
+  border-right: 1px solid #e0f2fe; /* sky-100 */
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  overflow-y: auto;
+  gap: 12px;
+}
+
+.sl-panel--grow {
+  flex: 1;
+  width: auto;
+  border-right: none;
+}
+
+.sl-panel-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #0369a1; /* sky-700 */
+}
+
+/* ── Forms ── */
+.sl-form-row {
+  display: flex;
+  gap: 6px;
+}
+
+.sl-form-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sl-label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sl-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #bae6fd; /* sky-200 */
+  border-radius: 6px;
+  font-size: 13px;
+  outline: none;
+  background: #f0f9ff; /* sky-50 */
+  color: #0c4a6e; /* sky-950 */
+  font-family: inherit;
+}
+
+.sl-input:focus {
+  border-color: #0ea5e9; /* sky-500 */
+  box-shadow: 0 0 0 2px #bae6fd;
+  background: #fff;
+}
+
+/* ── Buttons ── */
+.sl-btn {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 6px;
+  background: #0c4a6e; /* sky-950 – matches finch sidebar */
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+
+.sl-btn:hover:not(:disabled) { background: #075985; } /* sky-800 */
+.sl-btn:disabled { opacity: 0.4; cursor: default; }
+.sl-btn--full { width: 100%; }
+.sl-btn--outline {
+  background: transparent;
+  color: #0c4a6e;
+  border: 1px solid #0c4a6e;
+}
+.sl-btn--outline:hover:not(:disabled) { background: #e0f2fe; }
+
+/* ── Entity list ── */
+.sl-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sl-empty {
+  color: #94a3b8;
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+.sl-list-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: #1e3a5f;
+  padding: 5px 7px;
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 400;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.sl-list-btn:hover { background: #e0f2fe; } /* sky-100 */
+.sl-list-btn--active { background: #7dd3fc; color: #0c4a6e; font-weight: 600; } /* sky-300 – finch active */
+
+.sl-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.sl-dot--project { background: #0ea5e9; } /* sky-500 */
+.sl-dot--tiled   { background: #f97316; } /* orange-500 */
+
+/* ── Links list ── */
+.sl-link-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  font-size: 12px;
+  padding: 3px 0;
+  border-bottom: 1px solid #f0f9ff;
+}
+
+.sl-link-text { flex: 1; line-height: 1.5; word-break: break-all; }
+.sl-link-text em { color: #64748b; font-style: italic; }
+
+.sl-del-btn {
+  background: none;
+  border: none;
+  color: #cbd5e1;
+  padding: 0 5px;
+  font-size: 15px;
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.sl-del-btn:hover { background: #fee2e2; color: #ef4444; }
