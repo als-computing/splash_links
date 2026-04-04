@@ -32,7 +32,7 @@ pixi install          # resolve and install the environment (first time only)
 pixi run serve        # start the dev server at http://localhost:8080
 ```
 
-The GraphiQL IDE is available at **http://localhost:8080/graphql**.
+The GraphQL search tool is available at **http://localhost:8080/splash_links/graphql**.
 
 Set `SPLASH_LINKS_DB` to a file path to persist data across restarts (defaults to `links.sqlite` when launched via `pixi run serve`):
 
@@ -43,7 +43,7 @@ SPLASH_LINKS_DB=/data/links.sqlite pixi run serve
 ### With Docker
 
 ```bash
-docker build -t splash-links .
+docker build -t splash-links -f Containerfile .
 docker run -p 8080:8080 -v $(pwd)/data:/data \
   -e SPLASH_LINKS_DB=/data/links.sqlite \
   splash-links
