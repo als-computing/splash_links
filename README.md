@@ -18,6 +18,7 @@ The data model is simple:
 
 - **Entity** — a named node with a `type` and optional JSON `properties`
 - **Link** — a directed edge from a *subject* entity to an *object* entity, labelled with a *predicate* string and optional JSON `properties`
+- **Embedding** — a vector attached to an entity, with a model label and optional JSON metadata
 
 Example: `(Experiment "SAXS run 42") --[produced]--> (Dataset "raw_001.h5")`
 
@@ -103,6 +104,48 @@ mutation {
 }
 ```
 
+### Create an embedding
+
+```bash
+curl -X POST http://localhost:8080/splash_links/embeddings \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "entityId": "<entity-id>",
+    "embeddingModel": "text-embedding-3-small",
+    "vector": [0.12, -0.03, 0.88],
+    "properties": {"chunk": 1}
+  }'
+```
+
+### Find nearest embeddings
+
+Embedding CRUD uses REST. Nearest-neighbor search stays in GraphQL and uses cosine distance. For PostgreSQL, embeddings are stored in a native `pgvector` column; for SQLite, they are stored as compact binary blobs and searched in-process.
+
+```graphql
+query {
+  nearestEmbeddings(
+    vector: [0.11, -0.02, 0.90]
+    embeddingModel: "text-embedding-3-small"
+    limit: 5
+  ) {
+    distance
+    embedding {
+      id
+      entityId
+      entity { name }
+    }
+  }
+}
+```
+
+### Fetch or delete embeddings
+
+```bash
+curl http://localhost:8080/splash_links/embeddings/<embedding-id>
+curl 'http://localhost:8080/splash_links/embeddings?entityId=<entity-id>&embeddingModel=text-embedding-3-small'
+curl -X DELETE http://localhost:8080/splash_links/embeddings/<embedding-id>
+```
+
 ### Health check
 
 ```
@@ -130,6 +173,13 @@ pixi run links                              # all links
 pixi run links -- --predicate produced      # filter by predicate
 pixi run links -- --subject <entity-id>     # outgoing from a node
 pixi run links -- --object  <entity-id>     # incoming to a node
+```
+
+### List embeddings
+
+```bash
+pixi run embeddings -- --entity <entity-id>
+splash-links embeddings --model text-embedding-3-small --limit 10
 ```
 
 ### Raw SQLite shell
@@ -221,6 +271,7 @@ Tests require ≥ 90% coverage and will fail the build if that threshold is not 
 | `docs` | `pixi run docs` | Serve MkDocs site locally |
 | `entities` | `pixi run entities` | List entities in the database |
 | `links` | `pixi run links` | List links in the database |
+| `embeddings` | `pixi run embeddings` | List embeddings in the database |
 | `db` | `pixi run db` | Open raw SQLite interactive shell |
 
 Pass extra flags after `--`, e.g. `pixi run entities -- --type Experiment --limit 5`.
@@ -257,6 +308,16 @@ SPLASH_LINKS_DB=links.sqlite pixi run serve
 # or a bare path — the service auto-converts it to sqlite:///…
 SPLASH_LINKS_DB=/data/links.sqlite pixi run serve
 ```
+
+#### PostgreSQL with pgvector
+
+PostgreSQL nearest-neighbor search uses the `pgvector` extension. The Alembic migration will create the extension automatically when permissions allow it.
+
+```bash
+SPLASH_LINKS_DB=postgresql+psycopg2://user:pass@host/dbname pixi run serve
+```
+
+Embeddings use dialect-specific storage. PostgreSQL stores them in a native `pgvector` column, while SQLite stores packed float32 data in a BLOB. Base64 is intentionally not used, since it would only increase storage size and parsing overhead.
 
 #### PostgreSQL (recommended for production / multi-user deployments)
 

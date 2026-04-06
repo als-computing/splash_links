@@ -6,7 +6,7 @@ from typer.testing import CliRunner
 
 from splash_links import cli as root_cli
 from splash_links.client import cli as client_cli
-from splash_links.client.base import Entity, Link
+from splash_links.client.base import Embedding, EmbeddingMatch, Entity, Link
 
 runner = CliRunner()
 
@@ -239,6 +239,118 @@ def test_find_links_fails_gracefully(monkeypatch):
     result = runner.invoke(client_cli.app, ["find-links", "ent-1"])
     assert result.exit_code == 1
     assert "Failed to find links" in result.output
+
+
+def test_create_embedding_command_outputs_json(monkeypatch):
+    seen: dict[str, object] = {}
+
+    class FakeClient:
+        def create_embedding(self, entity_id, vector, embedding_model="default", properties=None):
+            seen["entity_id"] = entity_id
+            seen["vector"] = vector
+            seen["embedding_model"] = embedding_model
+            seen["properties"] = properties
+            return Embedding(
+                id="emb-1",
+                entity_id=entity_id,
+                embedding_model=embedding_model,
+                vector=vector,
+                dimensions=len(vector),
+                properties=properties,
+                created_at="2026-01-01T00:00:00Z",
+            )
+
+    monkeypatch.setattr(client_cli, "from_uri", lambda uri: FakeClient())
+
+    result = runner.invoke(
+        client_cli.app,
+        [
+            "create-embedding",
+            "ent-1",
+            "--vector",
+            "[0.1, 0.2, 0.3]",
+            "--model",
+            "model-a",
+            "--properties",
+            '{"chunk": 1}',
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["id"] == "emb-1"
+    assert payload["embedding_model"] == "model-a"
+    assert seen == {
+        "entity_id": "ent-1",
+        "vector": [0.1, 0.2, 0.3],
+        "embedding_model": "model-a",
+        "properties": {"chunk": 1},
+    }
+
+
+def test_create_embedding_invalid_vector_exits_2():
+    result = runner.invoke(
+        client_cli.app,
+        ["create-embedding", "ent-1", "--vector", "not-json"],
+    )
+    assert result.exit_code == 2
+    assert "Invalid JSON passed to --vector" in result.output
+
+
+def test_nearest_embeddings_command_outputs_list(monkeypatch):
+    seen: dict[str, object] = {}
+
+    class FakeClient:
+        def find_nearest_embeddings(self, vector, embedding_model=None, entity_id=None, limit=10, offset=0):
+            seen["vector"] = vector
+            seen["embedding_model"] = embedding_model
+            seen["entity_id"] = entity_id
+            seen["limit"] = limit
+            seen["offset"] = offset
+            return [
+                EmbeddingMatch(
+                    distance=0.01,
+                    embedding=Embedding(
+                        id="emb-1",
+                        entity_id="ent-1",
+                        embedding_model="model-a",
+                        vector=[0.1, 0.2],
+                        dimensions=2,
+                        properties=None,
+                        created_at="2026-01-01T00:00:00Z",
+                    ),
+                )
+            ]
+
+    monkeypatch.setattr(client_cli, "from_uri", lambda uri: FakeClient())
+
+    result = runner.invoke(
+        client_cli.app,
+        [
+            "nearest-embeddings",
+            "--vector",
+            "[0.1, 0.2]",
+            "--model",
+            "model-a",
+            "--entity-id",
+            "ent-1",
+            "--limit",
+            "5",
+            "--offset",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload[0]["embedding"]["id"] == "emb-1"
+    assert seen == {
+        "vector": [0.1, 0.2],
+        "embedding_model": "model-a",
+        "entity_id": "ent-1",
+        "limit": 5,
+        "offset": 1,
+    }
 
 
 def test_client_cli_main(monkeypatch):

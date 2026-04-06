@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 import typer
 
-from .base import Entity, Link, from_uri
+from .base import Embedding, EmbeddingMatch, Entity, Link, from_uri
 
 app = typer.Typer(help="Interact with a splash-links GraphQL service.")
 
@@ -34,6 +34,16 @@ def _entity_as_dict(entity: Entity) -> dict[str, Any]:
 
 def _link_as_dict(link: Link) -> dict[str, Any]:
     return link.model_dump()
+
+
+def _embedding_as_dict(embedding: Embedding) -> dict[str, Any]:
+    return embedding.model_dump()
+
+
+def _embedding_match_as_dict(match: EmbeddingMatch) -> dict[str, Any]:
+    payload = match.model_dump()
+    payload["embedding"] = _embedding_as_dict(match.embedding)
+    return payload
 
 
 def _emit_json(payload: Any) -> None:
@@ -126,6 +136,90 @@ def find_links(
         typer.echo(f"Failed to find links: {exc}", err=True)
         raise typer.Exit(code=1) from exc
     _emit_json([_link_as_dict(link) for link in links])
+
+
+@app.command("create-embedding")
+def create_embedding(
+    entity_id: str = typer.Argument(..., help="Entity ID that owns the embedding."),
+    vector: str = typer.Option(..., "--vector", "-v", help="JSON array of numeric embedding values."),
+    embedding_model: str = typer.Option("default", "--model", "-m", help="Embedding model label."),
+    properties: Optional[str] = typer.Option(
+        None,
+        "--properties",
+        "-p",
+        help='JSON object of metadata. Example: {"chunk": 3}',
+    ),
+    uri: str = typer.Option(
+        "splash://localhost:8080",
+        "--uri",
+        "-u",
+        envvar="SPLASH_LINKS_URI",
+        help="Service URI. Supports splash://, http://, or https://.",
+    ),
+) -> None:
+    """Create an embedding for an entity."""
+    props = _parse_json_option("properties", properties)
+    try:
+        raw_vector = json.loads(vector)
+    except json.JSONDecodeError as exc:
+        typer.echo(f"Invalid JSON passed to --vector: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    if not isinstance(raw_vector, list):
+        typer.echo("--vector must decode to a JSON array.", err=True)
+        raise typer.Exit(code=2)
+
+    client = from_uri(uri)
+    try:
+        embedding = client.create_embedding(
+            entity_id=entity_id,
+            vector=raw_vector,
+            embedding_model=embedding_model,
+            properties=props,
+        )
+    except Exception as exc:
+        typer.echo(f"Failed to create embedding: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_json(_embedding_as_dict(embedding))
+
+
+@app.command("nearest-embeddings")
+def nearest_embeddings(
+    vector: str = typer.Option(..., "--vector", "-v", help="JSON array of numeric query values."),
+    embedding_model: Optional[str] = typer.Option(None, "--model", "-m", help="Optional embedding model filter."),
+    entity_id: Optional[str] = typer.Option(None, "--entity-id", "-e", help="Optional entity filter."),
+    limit: int = typer.Option(10, "--limit", "-n", help="Maximum number of matches to fetch."),
+    offset: int = typer.Option(0, "--offset", "-o", help="Pagination offset."),
+    uri: str = typer.Option(
+        "splash://localhost:8080",
+        "--uri",
+        "-u",
+        envvar="SPLASH_LINKS_URI",
+        help="Service URI. Supports splash://, http://, or https://.",
+    ),
+) -> None:
+    """Find embeddings nearest to a query vector."""
+    try:
+        raw_vector = json.loads(vector)
+    except json.JSONDecodeError as exc:
+        typer.echo(f"Invalid JSON passed to --vector: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    if not isinstance(raw_vector, list):
+        typer.echo("--vector must decode to a JSON array.", err=True)
+        raise typer.Exit(code=2)
+
+    client = from_uri(uri)
+    try:
+        matches = client.find_nearest_embeddings(
+            vector=raw_vector,
+            embedding_model=embedding_model,
+            entity_id=entity_id,
+            limit=limit,
+            offset=offset,
+        )
+    except Exception as exc:
+        typer.echo(f"Failed to search embeddings: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_json([_embedding_match_as_dict(match) for match in matches])
 
 
 def main() -> None:

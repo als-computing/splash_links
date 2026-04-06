@@ -4,6 +4,7 @@ CLI for splash-links local DB inspection and remote client operations.
 Usage:
     splash-links entities [--type TYPE] [--limit N]
     splash-links links    [--subject ID] [--predicate PRED] [--object ID] [--limit N]
+    splash-links embeddings [--entity ID] [--model NAME] [--limit N]
     splash-links shell    # drop into the raw SQLite CLI
     splash-links client --help
 
@@ -114,6 +115,49 @@ def links(
             lnk.object_id[:8],
             props,
             lnk.created_at.isoformat(timespec="seconds"),
+        )
+
+    console.print(table)
+    console.print(f"[dim]{len(rows)} row(s)[/dim]")
+
+
+@app.command()
+def embeddings(
+    entity: Optional[str] = typer.Option(None, "--entity", "-e", help="Filter by entity ID."),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Filter by embedding model."),
+    limit: int = typer.Option(50, "--limit", "-n", help="Maximum rows to show."),
+) -> None:
+    """List embeddings stored in the database."""
+    store = _open_store()
+    try:
+        rows = store.list_embeddings(entity_id=entity, embedding_model=model, limit=limit)
+    finally:
+        store.close()
+
+    if not rows:
+        console.print("[yellow]No embeddings found.[/yellow]")
+        return
+
+    table = Table(box=box.SIMPLE_HEAVY, show_lines=False)
+    table.add_column("ID", style="dim", no_wrap=True)
+    table.add_column("Entity ID", style="dim", no_wrap=True)
+    table.add_column("Model", style="cyan")
+    table.add_column("Dims", justify="right")
+    table.add_column("Vector")
+    table.add_column("Properties")
+    table.add_column("Created", style="dim", no_wrap=True)
+
+    for embedding in rows:
+        props = json.dumps(embedding.properties) if embedding.properties else ""
+        vector = json.dumps(embedding.vector)
+        table.add_row(
+            embedding.id[:8],
+            embedding.entity_id[:8],
+            embedding.embedding_model,
+            str(embedding.dimensions),
+            vector,
+            props,
+            embedding.created_at.isoformat(timespec="seconds"),
         )
 
     console.print(table)

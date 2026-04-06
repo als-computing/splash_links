@@ -18,15 +18,55 @@ import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Optional
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, ConfigDict, Field
 from strawberry.fastapi import GraphQLRouter
 
 from .schema import schema
 from .store import SQLAlchemyStore as SQLiteStore
-from .store import Store, _make_engine, _url_from_path
+from .store import EmbeddingRecord, Store, _make_engine, _url_from_path
 
 logger = logging.getLogger(__name__)
+
+
+class EmbeddingPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    entity_id: str = Field(alias="entityId")
+    embedding_model: str = Field(alias="embeddingModel")
+    vector: list[float]
+    dimensions: int
+    properties: dict
+    created_at: str = Field(alias="createdAt")
+
+
+class CreateEmbeddingPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    entity_id: str = Field(alias="entityId")
+    vector: list[float]
+    embedding_model: str = Field(default="default", alias="embeddingModel")
+    properties: Optional[dict] = None
+
+
+def _embedding_payload(record: EmbeddingRecord) -> EmbeddingPayload:
+    return EmbeddingPayload(
+        id=record.id,
+        entity_id=record.entity_id,
+        embedding_model=record.embedding_model,
+        vector=record.vector,
+        dimensions=record.dimensions,
+        properties=record.properties,
+        created_at=record.created_at.isoformat(),
+    )
+
+
+def _embedding_error(exc: ValueError) -> HTTPException:
+    message = str(exc)
+    status_code = status.HTTP_404_NOT_FOUND if "not found" in message.lower() else status.HTTP_400_BAD_REQUEST
+    return HTTPException(status_code=status_code, detail=message)
 
 
 def _run_migrations(db_url: str) -> None:
@@ -121,6 +161,70 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
     @app.get("/splash_links/health", tags=["ops"], summary="Liveness check")
     def health() -> dict:
         return {"status": "ok"}
+
+    @app.post(
+        "/splash_links/embeddings",
+        response_model=EmbeddingPayload,
+        status_code=status.HTTP_201_CREATED,
+        tags=["embeddings"],
+        summary="Create an embedding",
+    )
+    def create_embedding(payload: CreateEmbeddingPayload, request: Request) -> EmbeddingPayload:
+        try:
+            record = request.app.state.store.create_embedding(
+                entity_id=payload.entity_id,
+                vector=payload.vector,
+                embedding_model=payload.embedding_model,
+                properties=payload.properties,
+            )
+        except ValueError as exc:
+            raise _embedding_error(exc) from exc
+        return _embedding_payload(record)
+
+    @app.get(
+        "/splash_links/embeddings/{embedding_id}",
+        response_model=EmbeddingPayload,
+        tags=["embeddings"],
+        summary="Fetch one embedding",
+    )
+    def get_embedding(embedding_id: str, request: Request) -> EmbeddingPayload:
+        record = request.app.state.store.get_embedding(embedding_id)
+        if record is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Embedding not found")
+        return _embedding_payload(record)
+
+    @app.get(
+        "/splash_links/embeddings",
+        response_model=list[EmbeddingPayload],
+        tags=["embeddings"],
+        summary="List embeddings",
+    )
+    def list_embeddings(
+        request: Request,
+        entity_id: Optional[str] = Query(None, alias="entityId"),
+        embedding_model: Optional[str] = Query(None, alias="embeddingModel"),
+        limit: int = Query(100, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
+    ) -> list[EmbeddingPayload]:
+        records = request.app.state.store.list_embeddings(
+            entity_id=entity_id,
+            embedding_model=embedding_model,
+            limit=limit,
+            offset=offset,
+        )
+        return [_embedding_payload(record) for record in records]
+
+    @app.delete(
+        "/splash_links/embeddings/{embedding_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        tags=["embeddings"],
+        summary="Delete one embedding",
+    )
+    def delete_embedding(embedding_id: str, request: Request) -> Response:
+        deleted = request.app.state.store.delete_embedding(embedding_id)
+        if not deleted:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Embedding not found")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     static_dir = os.environ.get("SPLASH_LINKS_STATIC_DIR", "")
     if static_dir and os.path.isdir(static_dir):

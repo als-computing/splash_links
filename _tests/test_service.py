@@ -8,6 +8,7 @@ external process or file is needed.
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import text
 from fastapi.testclient import TestClient
 
 from splash_links.app import create_app
@@ -49,6 +50,27 @@ def gql(client: TestClient, query: str, variables: dict | None = None) -> dict:
     return body["data"]
 
 
+def create_embedding(
+    client: TestClient,
+    *,
+    entity_id: str,
+    vector: list[float],
+    embedding_model: str = "default",
+    properties: dict | None = None,
+) -> dict:
+    resp = client.post(
+        "/splash_links/embeddings",
+        json={
+            "entityId": entity_id,
+            "vector": vector,
+            "embeddingModel": embedding_model,
+            "properties": properties,
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
 CREATE_ENTITY = """
 mutation CreateEntity($input: CreateEntityInput!) {
   createEntity(input: $input) {
@@ -75,7 +97,6 @@ mutation CreateLink($input: CreateLinkInput!) {
   }
 }
 """
-
 
 # ---------------------------------------------------------------------------
 # Health check
@@ -220,6 +241,76 @@ class TestSQLiteStore:
 
     def test_update_link_not_found(self, store):
         assert store.update_link("ghost", "anything") is None
+
+    def test_create_and_get_embedding(self, store):
+        entity = store.create_entity("Dataset", "run-1")
+        embedding = store.create_embedding(
+            entity.id,
+            [0.1, 0.2, 0.3],
+            embedding_model="text-embedding-3-small",
+            properties={"chunk": 1},
+        )
+
+        assert embedding.entity_id == entity.id
+        assert embedding.embedding_model == "text-embedding-3-small"
+        assert embedding.vector == [0.1, 0.2, 0.3]
+        assert embedding.dimensions == 3
+        assert embedding.properties == {"chunk": 1}
+
+        fetched = store.get_embedding(embedding.id)
+        assert fetched is not None
+        assert fetched.id == embedding.id
+
+    def test_sqlite_embeddings_are_stored_as_blob(self, store):
+        entity = store.create_entity("Dataset", "run-1")
+        embedding = store.create_embedding(entity.id, [0.1, 0.2, 0.3])
+
+        with store._engine.connect() as conn:
+            storage_type = conn.execute(
+                text("SELECT typeof(vector) FROM embeddings WHERE id = :id"),
+                {"id": embedding.id},
+            ).scalar_one()
+
+        assert storage_type == "blob"
+
+    def test_create_embedding_missing_entity_raises(self, store):
+        with pytest.raises(ValueError, match="Entity"):
+            store.create_embedding("missing", [0.1, 0.2, 0.3])
+
+    def test_create_embedding_rejects_zero_vector(self, store):
+        entity = store.create_entity("Dataset", "run-1")
+        with pytest.raises(ValueError, match="all zeros"):
+            store.create_embedding(entity.id, [0.0, 0.0, 0.0])
+
+    def test_list_embeddings_filters(self, store):
+        entity = store.create_entity("Dataset", "run-1")
+        other = store.create_entity("Dataset", "run-2")
+        store.create_embedding(entity.id, [0.1, 0.2], embedding_model="model-a")
+        store.create_embedding(entity.id, [0.2, 0.3], embedding_model="model-b")
+        store.create_embedding(other.id, [0.3, 0.4], embedding_model="model-a")
+
+        rows = store.list_embeddings(entity_id=entity.id, embedding_model="model-a")
+        assert len(rows) == 1
+        assert rows[0].embedding_model == "model-a"
+        assert rows[0].entity_id == entity.id
+
+    def test_find_nearest_embeddings_orders_by_distance(self, store):
+        entity = store.create_entity("Dataset", "run-1")
+        near = store.create_embedding(entity.id, [1.0, 0.0], embedding_model="model-a")
+        far = store.create_embedding(entity.id, [0.0, 1.0], embedding_model="model-a")
+        store.create_embedding(entity.id, [1.0, 1.0, 0.0], embedding_model="model-a")
+
+        matches = store.find_nearest_embeddings([0.9, 0.1], embedding_model="model-a")
+
+        assert [match.embedding.id for match in matches] == [near.id, far.id]
+        assert matches[0].distance < matches[1].distance
+
+    def test_delete_entity_cascades_embeddings(self, store):
+        entity = store.create_entity("Dataset", "run-1")
+        embedding = store.create_embedding(entity.id, [0.1, 0.2, 0.3])
+
+        assert store.delete_entity(entity.id) is True
+        assert store.get_embedding(embedding.id) is None
 
 
 # ---------------------------------------------------------------------------
@@ -387,3 +478,85 @@ class TestGraphQL:
             ' input: { predicate: "x" }) { id } }',
         )
         assert data["updateLink"] is None
+
+    def test_nearest_embeddings(self, client):
+        entity = gql(client, CREATE_ENTITY, {"input": {"entityType": "Dataset", "name": "run-1"}})["createEntity"]
+        create_embedding(client, entity_id=entity["id"], embedding_model="model-a", vector=[1.0, 0.0])
+        create_embedding(client, entity_id=entity["id"], embedding_model="model-a", vector=[0.0, 1.0])
+        create_embedding(client, entity_id=entity["id"], embedding_model="model-a", vector=[1.0, 1.0, 0.0])
+
+        data = gql(
+            client,
+            """
+            query Search($vector: [Float!]!, $model: String) {
+              nearestEmbeddings(vector: $vector, embeddingModel: $model) {
+                distance
+                embedding {
+                  entityId
+                  embeddingModel
+                  vector
+                }
+              }
+            }
+
+
+        class TestEmbeddingRestAPI:
+            def test_create_embedding(self, client):
+                entity = gql(client, CREATE_ENTITY, {"input": {"entityType": "Dataset", "name": "run-1"}})["createEntity"]
+
+                payload = create_embedding(
+                    client,
+                    entity_id=entity["id"],
+                    embedding_model="text-embedding-3-small",
+                    vector=[0.1, 0.2, 0.3],
+                    properties={"chunk": 1},
+                )
+
+                assert payload["entityId"] == entity["id"]
+                assert payload["embeddingModel"] == "text-embedding-3-small"
+                assert payload["dimensions"] == 3
+                assert payload["properties"] == {"chunk": 1}
+
+            def test_get_and_list_embeddings(self, client):
+                entity = gql(client, CREATE_ENTITY, {"input": {"entityType": "Dataset", "name": "run-1"}})["createEntity"]
+                created = create_embedding(client, entity_id=entity["id"], embedding_model="model-a", vector=[0.1, 0.2])
+
+                fetched = client.get(f"/splash_links/embeddings/{created['id']}")
+                assert fetched.status_code == 200
+                assert fetched.json()["id"] == created["id"]
+
+                listed = client.get(
+                    "/splash_links/embeddings",
+                    params={"entityId": entity["id"], "embeddingModel": "model-a"},
+                )
+                assert listed.status_code == 200
+                rows = listed.json()
+                assert len(rows) == 1
+                assert rows[0]["id"] == created["id"]
+
+            def test_delete_embedding(self, client):
+                entity = gql(client, CREATE_ENTITY, {"input": {"entityType": "Dataset", "name": "run-1"}})["createEntity"]
+                created = create_embedding(client, entity_id=entity["id"], vector=[0.1, 0.2, 0.3])
+
+                deleted = client.delete(f"/splash_links/embeddings/{created['id']}")
+                assert deleted.status_code == 204
+
+                missing = client.get(f"/splash_links/embeddings/{created['id']}")
+                assert missing.status_code == 404
+
+            def test_delete_entity_cascades_embeddings(self, client):
+                entity = gql(client, CREATE_ENTITY, {"input": {"entityType": "Dataset", "name": "run-1"}})["createEntity"]
+                created = create_embedding(client, entity_id=entity["id"], vector=[0.1, 0.2, 0.3])
+
+                deleted = gql(client, "mutation D($id: ID!) { deleteEntity(id: $id) }", {"id": entity["id"]})
+                assert deleted["deleteEntity"] is True
+
+                missing = client.get(f"/splash_links/embeddings/{created['id']}")
+                assert missing.status_code == 404
+        )["createEmbedding"]
+
+        deleted = gql(client, "mutation D($id: ID!) { deleteEntity(id: $id) }", {"id": entity["id"]})
+        assert deleted["deleteEntity"] is True
+
+        gone = gql(client, "query Q($id: ID!) { embedding(id: $id) { id } }", {"id": embedding["id"]})
+        assert gone["embedding"] is None

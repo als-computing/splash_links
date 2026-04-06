@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 import splash_links.cli as cli_module
 from splash_links.cli import app
-from splash_links.store import EntityRecord, LinkRecord
+from splash_links.store import EmbeddingRecord, EntityRecord, LinkRecord
 
 runner = CliRunner()
 
@@ -44,10 +44,25 @@ def _make_link(**kw) -> LinkRecord:
     return LinkRecord(**defaults)
 
 
+def _make_embedding(**kw) -> EmbeddingRecord:
+    defaults = dict(
+        id="emb-1",
+        entity_id="ent-1",
+        embedding_model="model-a",
+        vector=[0.1, 0.2, 0.3],
+        dimensions=3,
+        properties={},
+        created_at=datetime.now(timezone.utc),
+    )
+    defaults.update(kw)
+    return EmbeddingRecord(**defaults)
+
+
 class FakeStore:
-    def __init__(self, entities=None, links=None):
+    def __init__(self, entities=None, links=None, embeddings=None):
         self._entities = entities or []
         self._links = links or []
+        self._embeddings = embeddings or []
 
     def list_entities(self, entity_type=None, limit=50, offset=0):
         if entity_type:
@@ -56,6 +71,14 @@ class FakeStore:
 
     def find_links(self, subject_id=None, predicate=None, object_id=None, limit=50, offset=0):
         return self._links
+
+    def list_embeddings(self, entity_id=None, embedding_model=None, limit=50, offset=0):
+        rows = self._embeddings
+        if entity_id:
+            rows = [embedding for embedding in rows if embedding.entity_id == entity_id]
+        if embedding_model:
+            rows = [embedding for embedding in rows if embedding.embedding_model == embedding_model]
+        return rows
 
     def close(self):
         pass
@@ -122,6 +145,26 @@ def test_links_with_properties(monkeypatch):
     result = runner.invoke(app, ["links"])
     assert result.exit_code == 0
     assert "confidence" in result.output
+
+
+# ---------------------------------------------------------------------------
+# embeddings command
+# ---------------------------------------------------------------------------
+
+
+def test_embeddings_shows_rows(monkeypatch):
+    fake = FakeStore(embeddings=[_make_embedding()])
+    monkeypatch.setattr(cli_module, "_open_store", lambda: fake)
+    result = runner.invoke(app, ["embeddings"])
+    assert result.exit_code == 0
+    assert "model-a" in result.output
+
+
+def test_embeddings_no_rows_prints_message(monkeypatch):
+    monkeypatch.setattr(cli_module, "_open_store", lambda: FakeStore())
+    result = runner.invoke(app, ["embeddings"])
+    assert result.exit_code == 0
+    assert "No embeddings found" in result.output
 
 
 # ---------------------------------------------------------------------------

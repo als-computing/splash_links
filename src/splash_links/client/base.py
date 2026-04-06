@@ -1,5 +1,5 @@
 """
-HTTP client for the splash-links GraphQL service.
+HTTP client for the splash-links service.
 
 Usage::
 
@@ -47,12 +47,32 @@ class Link(BaseModel):
     created_at: str = Field(alias="createdAt")
 
 
+class Embedding(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    id: str
+    entity_id: str = Field(alias="entityId")
+    embedding_model: str = Field(alias="embeddingModel")
+    vector: list[float]
+    dimensions: int
+    properties: Optional[dict]
+    created_at: str = Field(alias="createdAt")
+
+
+class EmbeddingMatch(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    embedding: Embedding
+    distance: float
+
+
 # ---------------------------------------------------------------------------
 # GraphQL operations
 # ---------------------------------------------------------------------------
 
 _ENTITY_FIELDS = "id entityType name uri properties createdAt"
 _LINK_FIELDS = "id subjectId predicate objectId properties createdAt"
+_EMBEDDING_FIELDS = "id entityId embeddingModel vector dimensions properties createdAt"
 
 _CREATE_ENTITY_MUTATION = f"""
 mutation CreateEntity($input: CreateEntityInput!) {{
@@ -77,6 +97,21 @@ query FindLinks($subjectId: ID, $objectId: ID, $predicate: String, $limit: Int, 
 }}
 """
 
+_NEAREST_EMBEDDINGS_QUERY = f"""
+query NearestEmbeddings($vector: [Float!]!, $embeddingModel: String, $entityId: ID, $limit: Int, $offset: Int) {{
+    nearestEmbeddings(
+        vector: $vector
+        embeddingModel: $embeddingModel
+        entityId: $entityId
+        limit: $limit
+        offset: $offset
+    ) {{
+        distance
+        embedding {{ {_EMBEDDING_FIELDS} }}
+    }}
+}}
+"""
+
 
 # ---------------------------------------------------------------------------
 # Record -> model helpers
@@ -96,6 +131,14 @@ def _link_from_dict(d: dict) -> Link:
     return Link.model_validate(d)
 
 
+def _embedding_from_dict(d: dict) -> Embedding:
+    return Embedding.model_validate(d)
+
+
+def _embedding_match_from_dict(d: dict) -> EmbeddingMatch:
+    return EmbeddingMatch.model_validate(d)
+
+
 # ---------------------------------------------------------------------------
 # Client
 # ---------------------------------------------------------------------------
@@ -103,13 +146,15 @@ def _link_from_dict(d: dict) -> Link:
 
 class LinksClient:
     """
-    Synchronous HTTP client for the splash-links GraphQL API.
+    Synchronous HTTP client for the splash-links API.
 
     Instantiate via :func:`from_uri` rather than directly.
     """
 
     def __init__(self, base_url: str) -> None:
-        self._gql_url = base_url.rstrip("/") + "/splash_links/graphql"
+        self._base_url = base_url.rstrip("/")
+        self._gql_url = self._base_url + "/splash_links/graphql"
+        self._embeddings_url = self._base_url + "/splash_links/embeddings"
         # Cache: tiled node URI -> Entity, avoids duplicate entity creation
         self._tiled_cache: dict[str, Entity] = {}
 
@@ -233,6 +278,47 @@ class LinksClient:
                 seen.add(record["id"])
                 links.append(_link_from_dict(record))
         return links
+
+    def create_embedding(
+        self,
+        entity_id: Any,
+        vector: list[float],
+        embedding_model: str = "default",
+        properties: Optional[dict] = None,
+    ) -> Embedding:
+        resolved_entity_id = self._resolve(entity_id)
+        resp = httpx.post(
+            self._embeddings_url,
+            json={
+                "entityId": resolved_entity_id,
+                "vector": vector,
+                "embeddingModel": embedding_model,
+                "properties": properties,
+            },
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        return _embedding_from_dict(resp.json())
+
+    def find_nearest_embeddings(
+        self,
+        vector: list[float],
+        embedding_model: Optional[str] = None,
+        entity_id: Optional[Any] = None,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> list[EmbeddingMatch]:
+        data = self._execute(
+            _NEAREST_EMBEDDINGS_QUERY,
+            {
+                "vector": vector,
+                "embeddingModel": embedding_model,
+                "entityId": self._resolve(entity_id) if entity_id is not None else None,
+                "limit": limit,
+                "offset": offset,
+            },
+        )
+        return [_embedding_match_from_dict(record) for record in data["nearestEmbeddings"]]
 
 
 # ---------------------------------------------------------------------------

@@ -6,13 +6,14 @@ Graph model:
   - Link     — a directed, predicate-labeled edge between two entities
 
 Query highlights:
-  - entity / entities — fetch nodes
-  - link / links      — fetch edges, filterable by subject, predicate, object
-  - Entity.outgoing_links / incoming_links — graph traversal from a node
+    - entity / entities — fetch nodes
+    - link / links      — fetch edges, filterable by subject, predicate, object
+    - nearest_embeddings — cosine nearest-neighbor search over stored embeddings
+    - Entity.outgoing_links / incoming_links — graph traversal from a node
 
 Mutations:
-  - createEntity / createLink
-  - deleteEntity (cascades to attached links) / deleteLink
+    - createEntity / createLink
+    - deleteEntity (cascades to attached links) / deleteLink
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ import strawberry
 from strawberry.scalars import JSON as StrawberryJSON
 from strawberry.types import Info
 
-from .store import EntityRecord, LinkRecord, Store
+from .store import EmbeddingMatchRecord, EmbeddingRecord, EntityRecord, LinkRecord, Store
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,28 @@ class Link:
         return _entity_from_record(record) if record else None
 
 
+@strawberry.type
+class Embedding:
+    id: strawberry.ID
+    entity_id: strawberry.ID
+    embedding_model: str
+    vector: list[float]
+    dimensions: int
+    properties: Optional[JSON]  # type: ignore[valid-type]
+    created_at: str
+
+    @strawberry.field
+    def entity(self, info: Info) -> Optional[Entity]:
+        record = _store(info).get_entity(str(self.entity_id))
+        return _entity_from_record(record) if record else None
+
+
+@strawberry.type
+class EmbeddingMatch:
+    embedding: Embedding
+    distance: float
+
+
 # ---------------------------------------------------------------------------
 # Record -> GQL type converters
 # ---------------------------------------------------------------------------
@@ -125,6 +148,25 @@ def _link_from_record(r: LinkRecord) -> Link:
         object_id=strawberry.ID(r.object_id),
         properties=r.properties if r.properties else None,
         created_at=r.created_at.isoformat(),
+    )
+
+
+def _embedding_from_record(r: EmbeddingRecord) -> Embedding:
+    return Embedding(
+        id=strawberry.ID(r.id),
+        entity_id=strawberry.ID(r.entity_id),
+        embedding_model=r.embedding_model,
+        vector=r.vector,
+        dimensions=r.dimensions,
+        properties=r.properties if r.properties else None,
+        created_at=r.created_at.isoformat(),
+    )
+
+
+def _embedding_match_from_record(r: EmbeddingMatchRecord) -> EmbeddingMatch:
+    return EmbeddingMatch(
+        embedding=_embedding_from_record(r.embedding),
+        distance=r.distance,
     )
 
 
@@ -207,6 +249,25 @@ class Query:
             offset=offset,
         )
         return [_link_from_record(r) for r in records]
+
+    @strawberry.field(description="Find embeddings nearest to a query vector using cosine distance.")
+    def nearest_embeddings(
+        self,
+        info: Info,
+        vector: list[float],
+        embedding_model: Optional[str] = None,
+        entity_id: Optional[strawberry.ID] = None,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> list[EmbeddingMatch]:
+        records = _store(info).find_nearest_embeddings(
+            query_vector=vector,
+            embedding_model=embedding_model,
+            entity_id=str(entity_id) if entity_id else None,
+            limit=limit,
+            offset=offset,
+        )
+        return [_embedding_match_from_record(r) for r in records]
 
 
 @strawberry.type

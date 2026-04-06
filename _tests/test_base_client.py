@@ -4,7 +4,7 @@ import pytest
 
 from splash_links.client import base as base_module
 from splash_links.client import tiled as tiled_module
-from splash_links.client.base import Entity, LinksClient, from_uri
+from splash_links.client.base import EmbeddingMatch, Entity, LinksClient, from_uri
 from splash_links.client.tiled import TiledEntity, _node_name, _node_properties, _node_uri, from_entity
 from splash_links.client.tiled import get_or_create_entity as tiled_get_or_create
 
@@ -192,6 +192,106 @@ def test_find_links_deduplicates_records(monkeypatch):
         "predicate": "rel",
         "limit": 5,
         "offset": 2,
+    }
+
+
+def test_create_embedding_posts_expected_payload(monkeypatch):
+    seen: dict[str, object] = {}
+
+    def fake_post(url: str, json: dict, timeout: float):
+        seen["url"] = url
+        seen["json"] = json
+        seen["timeout"] = timeout
+        return FakeResponse(
+            {
+                "id": "emb-1",
+                "entityId": "ent-1",
+                "embeddingModel": "model-a",
+                "vector": [0.1, 0.2, 0.3],
+                "dimensions": 3,
+                "properties": {"chunk": 1},
+                "createdAt": "2026-01-01T00:00:00Z",
+            }
+        )
+
+    monkeypatch.setattr(base_module.httpx, "post", fake_post)
+
+    client = from_uri("splash://api:8080")
+    embedding = client.create_embedding(
+        entity_id="ent-1",
+        vector=[0.1, 0.2, 0.3],
+        embedding_model="model-a",
+        properties={"chunk": 1},
+    )
+
+    assert embedding.id == "emb-1"
+    assert seen["url"] == "http://api:8080/splash_links/embeddings"
+    assert seen["timeout"] == 30.0
+    assert seen["json"] == {
+        "entityId": "ent-1",
+        "vector": [0.1, 0.2, 0.3],
+        "embeddingModel": "model-a",
+        "properties": {"chunk": 1},
+    }
+
+
+def test_find_nearest_embeddings_posts_expected_payload(monkeypatch):
+    seen: dict[str, object] = {}
+
+    def fake_execute(query: str, variables: dict | None = None) -> dict:
+        seen["query"] = query
+        seen["variables"] = variables
+        return {
+            "nearestEmbeddings": [
+                {
+                    "distance": 0.01,
+                    "embedding": {
+                        "id": "emb-1",
+                        "entityId": "ent-1",
+                        "embeddingModel": "model-a",
+                        "vector": [0.1, 0.2],
+                        "dimensions": 2,
+                        "properties": None,
+                        "createdAt": "2026-01-01T00:00:00Z",
+                    },
+                }
+            ]
+        }
+
+    client = LinksClient("http://example.com")
+    monkeypatch.setattr(client, "_execute", fake_execute)
+
+    matches = client.find_nearest_embeddings(
+        vector=[0.1, 0.2],
+        embedding_model="model-a",
+        entity_id="ent-1",
+        limit=5,
+        offset=1,
+    )
+
+    assert matches == [
+        EmbeddingMatch.model_validate(
+            {
+                "distance": 0.01,
+                "embedding": {
+                    "id": "emb-1",
+                    "entityId": "ent-1",
+                    "embeddingModel": "model-a",
+                    "vector": [0.1, 0.2],
+                    "dimensions": 2,
+                    "properties": None,
+                    "createdAt": "2026-01-01T00:00:00Z",
+                },
+            }
+        )
+    ]
+    assert seen["query"] == base_module._NEAREST_EMBEDDINGS_QUERY
+    assert seen["variables"] == {
+        "vector": [0.1, 0.2],
+        "embeddingModel": "model-a",
+        "entityId": "ent-1",
+        "limit": 5,
+        "offset": 1,
     }
 
 
