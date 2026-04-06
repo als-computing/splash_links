@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 import typer
 
-from .base import Embedding, EmbeddingMatch, Entity, Link, from_uri
+from .base import Embedding, EmbeddingMatch, EmbeddingModel, Entity, Link, from_uri
 
 app = typer.Typer(help="Interact with a splash-links GraphQL service.")
 
@@ -38,6 +38,10 @@ def _link_as_dict(link: Link) -> dict[str, Any]:
 
 def _embedding_as_dict(embedding: Embedding) -> dict[str, Any]:
     return embedding.model_dump()
+
+
+def _embedding_model_as_dict(model: EmbeddingModel) -> dict[str, Any]:
+    return model.model_dump()
 
 
 def _embedding_match_as_dict(match: EmbeddingMatch) -> dict[str, Any]:
@@ -142,7 +146,7 @@ def find_links(
 def create_embedding(
     entity_id: str = typer.Argument(..., help="Entity ID that owns the embedding."),
     vector: str = typer.Option(..., "--vector", "-v", help="JSON array of numeric embedding values."),
-    embedding_model: str = typer.Option("default", "--model", "-m", help="Embedding model label."),
+    embedding_model_id: str = typer.Option(..., "--model-id", "-m", help="Embedding model ID."),
     properties: Optional[str] = typer.Option(
         None,
         "--properties",
@@ -173,7 +177,7 @@ def create_embedding(
         embedding = client.create_embedding(
             entity_id=entity_id,
             vector=raw_vector,
-            embedding_model=embedding_model,
+            embedding_model_id=embedding_model_id,
             properties=props,
         )
     except Exception as exc:
@@ -182,10 +186,34 @@ def create_embedding(
     _emit_json(_embedding_as_dict(embedding))
 
 
+@app.command("create-embedding-model")
+def create_embedding_model(
+    name: str = typer.Option(..., "--name", help="Embedding model name."),
+    version: str = typer.Option(..., "--version", help="Embedding model version string."),
+    description: Optional[str] = typer.Option(None, "--description", help="Optional model description."),
+    url: Optional[str] = typer.Option(None, "--url", help="Optional model URL."),
+    uri: str = typer.Option(
+        "splash://localhost:8080",
+        "--uri",
+        "-u",
+        envvar="SPLASH_LINKS_URI",
+        help="Service URI. Supports splash://, http://, or https://.",
+    ),
+) -> None:
+    """Create an embedding model record."""
+    client = from_uri(uri)
+    try:
+        model = client.create_embedding_model(name=name, version=version, description=description, url=url)
+    except Exception as exc:
+        typer.echo(f"Failed to create embedding model: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    _emit_json(_embedding_model_as_dict(model))
+
+
 @app.command("nearest-embeddings")
 def nearest_embeddings(
     vector: str = typer.Option(..., "--vector", "-v", help="JSON array of numeric query values."),
-    embedding_model: Optional[str] = typer.Option(None, "--model", "-m", help="Optional embedding model filter."),
+    embedding_model_id: Optional[str] = typer.Option(None, "--model-id", "-m", help="Optional embedding model filter."),
     entity_id: Optional[str] = typer.Option(None, "--entity-id", "-e", help="Optional entity filter."),
     limit: int = typer.Option(10, "--limit", "-n", help="Maximum number of matches to fetch."),
     offset: int = typer.Option(0, "--offset", "-o", help="Pagination offset."),
@@ -211,7 +239,7 @@ def nearest_embeddings(
     try:
         matches = client.find_nearest_embeddings(
             vector=raw_vector,
-            embedding_model=embedding_model,
+            embedding_model_id=embedding_model_id,
             entity_id=entity_id,
             limit=limit,
             offset=offset,

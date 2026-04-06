@@ -39,10 +39,26 @@ def upgrade() -> None:
         vector_type = sa.LargeBinary()
 
     op.create_table(
+        "embedding_models",
+        sa.Column("id", sa.String(), nullable=False),
+        sa.Column("name", sa.String(), nullable=False),
+        sa.Column("description", sa.String(), nullable=True),
+        sa.Column("url", sa.String(), nullable=True),
+        sa.Column("version", sa.String(), nullable=False),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        "embedding_models_name_version_idx",
+        "embedding_models",
+        ["name", "version"],
+        unique=True,
+    )
+
+    op.create_table(
         "embeddings",
         sa.Column("id", sa.String(), nullable=False),
         sa.Column("entity_id", sa.String(), sa.ForeignKey("entities.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("embedding_model", sa.String(), nullable=False),
+        sa.Column("embedding_model_id", sa.String(), sa.ForeignKey("embedding_models.id", ondelete="RESTRICT"), nullable=False),
         sa.Column("vector", vector_type, nullable=False),
         sa.Column("dimensions", sa.Integer(), nullable=False),
         sa.Column("properties", sa.JSON(), nullable=False),
@@ -52,12 +68,12 @@ def upgrade() -> None:
     op.create_index(
         "embeddings_entity_model_created_idx",
         "embeddings",
-        ["entity_id", "embedding_model", "created_at"],
+        ["entity_id", "embedding_model_id", "created_at"],
     )
     op.create_index(
         "embeddings_model_dimensions_idx",
         "embeddings",
-        ["embedding_model", "dimensions"],
+        ["embedding_model_id", "dimensions"],
     )
 
 
@@ -65,3 +81,5 @@ def downgrade() -> None:
     op.drop_index("embeddings_model_dimensions_idx", table_name="embeddings")
     op.drop_index("embeddings_entity_model_created_idx", table_name="embeddings")
     op.drop_table("embeddings")
+    op.drop_index("embedding_models_name_version_idx", table_name="embedding_models")
+    op.drop_table("embedding_models")

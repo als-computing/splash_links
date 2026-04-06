@@ -46,6 +46,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.types import TypeDecorator, UserDefinedType
 
@@ -668,6 +669,68 @@ class SQLAlchemyStore(Store):
         return self._to_link(row) if row else None
 
     # ------------------------------------------------------------------
+    # Embedding model operations
+    # ------------------------------------------------------------------
+
+    def create_embedding_model(
+        self,
+        name: str,
+        version: str,
+        description: Optional[str] = None,
+        url: Optional[str] = None,
+    ) -> EmbeddingModelRecord:
+        stmt = select(_embedding_models).where(
+            _embedding_models.c.name == name,
+            _embedding_models.c.version == version,
+        )
+        with self._engine.begin() as conn:
+            existing = conn.execute(stmt).one_or_none()
+            if existing is not None:
+                raise ValueError(f"Embedding model '{name}' version '{version}' already exists")
+
+            id_ = str(uuid.uuid4())
+            try:
+                conn.execute(
+                    insert(_embedding_models).values(
+                        id=id_,
+                        name=name,
+                        description=description,
+                        url=url,
+                        version=version,
+                    )
+                )
+            except IntegrityError as exc:
+                raise ValueError(f"Embedding model '{name}' version '{version}' already exists") from exc
+            row = conn.execute(select(_embedding_models).where(_embedding_models.c.id == id_)).one()
+        return self._to_embedding_model(row)
+
+    def get_embedding_model(self, id: str) -> Optional[EmbeddingModelRecord]:
+        with self._engine.connect() as conn:
+            row = conn.execute(select(_embedding_models).where(_embedding_models.c.id == id)).one_or_none()
+        return self._to_embedding_model(row) if row else None
+
+    def list_embedding_models(
+        self,
+        name: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[EmbeddingModelRecord]:
+        stmt = select(_embedding_models).order_by(_embedding_models.c.name, _embedding_models.c.version).limit(limit).offset(offset)
+        if name is not None:
+            stmt = stmt.where(_embedding_models.c.name == name)
+        with self._engine.connect() as conn:
+            rows = conn.execute(stmt).all()
+        return [self._to_embedding_model(row) for row in rows]
+
+    def delete_embedding_model(self, id: str) -> bool:
+        try:
+            with self._engine.begin() as conn:
+                result = conn.execute(delete(_embedding_models).where(_embedding_models.c.id == id))
+        except IntegrityError as exc:
+            raise ValueError(f"Embedding model '{id}' is still referenced by embeddings") from exc
+        return result.rowcount > 0
+
+    # ------------------------------------------------------------------
     # Embedding operations
     # ------------------------------------------------------------------
 
@@ -675,11 +738,13 @@ class SQLAlchemyStore(Store):
         self,
         entity_id: str,
         vector: list[float],
-        embedding_model: str = "default",
+        embedding_model_id: str,
         properties: Optional[dict] = None,
     ) -> EmbeddingRecord:
         if not self.get_entity(entity_id):
             raise ValueError(f"Entity '{entity_id}' not found")
+        if not self.get_embedding_model(embedding_model_id):
+            raise ValueError(f"Embedding model '{embedding_model_id}' not found")
 
         normalized_vector = _normalize_vector(vector)
         id_ = str(uuid.uuid4())
@@ -689,33 +754,33 @@ class SQLAlchemyStore(Store):
                 insert(_embeddings).values(
                     id=id_,
                     entity_id=entity_id,
-                    embedding_model=embedding_model,
+                    embedding_model_id=embedding_model_id,
                     vector=normalized_vector,
                     dimensions=len(normalized_vector),
                     properties=properties or {},
                     created_at=now,
                 )
             )
-            row = conn.execute(select(_embeddings).where(_embeddings.c.id == id_)).one()
+            row = conn.execute(_embedding_select().where(_embeddings.c.id == id_)).one()
         return self._to_embedding(row)
 
     def get_embedding(self, id: str) -> Optional[EmbeddingRecord]:
         with self._engine.connect() as conn:
-            row = conn.execute(select(_embeddings).where(_embeddings.c.id == id)).one_or_none()
+            row = conn.execute(_embedding_select().where(_embeddings.c.id == id)).one_or_none()
         return self._to_embedding(row) if row else None
 
     def list_embeddings(
         self,
         entity_id: Optional[str] = None,
-        embedding_model: Optional[str] = None,
+        embedding_model_id: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[EmbeddingRecord]:
-        stmt = select(_embeddings).order_by(_embeddings.c.created_at).limit(limit).offset(offset)
+        stmt = _embedding_select().order_by(_embeddings.c.created_at).limit(limit).offset(offset)
         if entity_id is not None:
             stmt = stmt.where(_embeddings.c.entity_id == entity_id)
-        if embedding_model is not None:
-            stmt = stmt.where(_embeddings.c.embedding_model == embedding_model)
+        if embedding_model_id is not None:
+            stmt = stmt.where(_embeddings.c.embedding_model_id == embedding_model_id)
         with self._engine.connect() as conn:
             rows = conn.execute(stmt).all()
         return [self._to_embedding(row) for row in rows]
@@ -723,7 +788,7 @@ class SQLAlchemyStore(Store):
     def find_nearest_embeddings(
         self,
         query_vector: list[float],
-        embedding_model: Optional[str] = None,
+        embedding_model_id: Optional[str] = None,
         entity_id: Optional[str] = None,
         limit: int = 10,
         offset: int = 0,
@@ -732,14 +797,14 @@ class SQLAlchemyStore(Store):
         if self._engine.dialect.name == "postgresql":
             return self._find_nearest_embeddings_postgresql(
                 query_vector=normalized_query,
-                embedding_model=embedding_model,
+                embedding_model_id=embedding_model_id,
                 entity_id=entity_id,
                 limit=limit,
                 offset=offset,
             )
         return self._find_nearest_embeddings_python(
             query_vector=normalized_query,
-            embedding_model=embedding_model,
+            embedding_model_id=embedding_model_id,
             entity_id=entity_id,
             limit=limit,
             offset=offset,
@@ -748,16 +813,16 @@ class SQLAlchemyStore(Store):
     def _find_nearest_embeddings_python(
         self,
         query_vector: list[float],
-        embedding_model: Optional[str],
+        embedding_model_id: Optional[str],
         entity_id: Optional[str],
         limit: int,
         offset: int,
     ) -> list[EmbeddingMatchRecord]:
-        stmt = select(_embeddings).where(_embeddings.c.dimensions == len(query_vector))
+        stmt = _embedding_select().where(_embeddings.c.dimensions == len(query_vector))
         if entity_id is not None:
             stmt = stmt.where(_embeddings.c.entity_id == entity_id)
-        if embedding_model is not None:
-            stmt = stmt.where(_embeddings.c.embedding_model == embedding_model)
+        if embedding_model_id is not None:
+            stmt = stmt.where(_embeddings.c.embedding_model_id == embedding_model_id)
 
         with self._engine.connect() as conn:
             rows = conn.execute(stmt).all()
@@ -775,12 +840,12 @@ class SQLAlchemyStore(Store):
     def _find_nearest_embeddings_postgresql(
         self,
         query_vector: list[float],
-        embedding_model: Optional[str],
+        embedding_model_id: Optional[str],
         entity_id: Optional[str],
         limit: int,
         offset: int,
     ) -> list[EmbeddingMatchRecord]:
-        conditions = ["dimensions = :dimensions"]
+        conditions = ["e.dimensions = :dimensions"]
         params: dict[str, object] = {
             "dimensions": len(query_vector),
             "query_vector": _serialize_vector(query_vector),
@@ -788,23 +853,28 @@ class SQLAlchemyStore(Store):
             "offset": offset,
         }
         if entity_id is not None:
-            conditions.append("entity_id = :entity_id")
+            conditions.append("e.entity_id = :entity_id")
             params["entity_id"] = entity_id
-        if embedding_model is not None:
-            conditions.append("embedding_model = :embedding_model")
-            params["embedding_model"] = embedding_model
+        if embedding_model_id is not None:
+            conditions.append("e.embedding_model_id = :embedding_model_id")
+            params["embedding_model_id"] = embedding_model_id
 
         sql = f"""
             SELECT
-                id,
-                entity_id,
-                embedding_model,
-                vector,
-                dimensions,
-                properties,
-                created_at,
-                CAST(vector AS vector) <=> CAST(:query_vector AS vector) AS distance
-            FROM embeddings
+                e.id,
+                e.entity_id,
+                e.embedding_model_id,
+                e.vector,
+                e.dimensions,
+                e.properties,
+                e.created_at,
+                m.name AS embedding_model_name,
+                m.description AS embedding_model_description,
+                m.url AS embedding_model_url,
+                m.version AS embedding_model_version,
+                e.vector <=> CAST(:query_vector AS vector) AS distance
+            FROM embeddings e
+            JOIN embedding_models m ON m.id = e.embedding_model_id
             WHERE {' AND '.join(conditions)}
             ORDER BY distance, created_at, id
             LIMIT :limit

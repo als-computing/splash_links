@@ -4,7 +4,7 @@ CLI for splash-links local DB inspection and remote client operations.
 Usage:
     splash-links entities [--type TYPE] [--limit N]
     splash-links links    [--subject ID] [--predicate PRED] [--object ID] [--limit N]
-    splash-links embeddings [--entity ID] [--model NAME] [--limit N]
+    splash-links embeddings [--entity ID] [--model-id ID] [--limit N]
     splash-links shell    # drop into the raw SQLite CLI
     splash-links client --help
 
@@ -124,13 +124,13 @@ def links(
 @app.command()
 def embeddings(
     entity: Optional[str] = typer.Option(None, "--entity", "-e", help="Filter by entity ID."),
-    model: Optional[str] = typer.Option(None, "--model", "-m", help="Filter by embedding model."),
+    model_id: Optional[str] = typer.Option(None, "--model-id", "-m", help="Filter by embedding model ID."),
     limit: int = typer.Option(50, "--limit", "-n", help="Maximum rows to show."),
 ) -> None:
     """List embeddings stored in the database."""
     store = _open_store()
     try:
-        rows = store.list_embeddings(entity_id=entity, embedding_model=model, limit=limit)
+        rows = store.list_embeddings(entity_id=entity, embedding_model_id=model_id, limit=limit)
     finally:
         store.close()
 
@@ -153,7 +153,7 @@ def embeddings(
         table.add_row(
             embedding.id[:8],
             embedding.entity_id[:8],
-            embedding.embedding_model,
+            embedding.embedding_model.name,
             str(embedding.dimensions),
             vector,
             props,

@@ -25,9 +25,19 @@ from strawberry.fastapi import GraphQLRouter
 
 from .schema import schema
 from .store import SQLAlchemyStore as SQLiteStore
-from .store import EmbeddingRecord, Store, _make_engine, _url_from_path
+from .store import EmbeddingModelRecord, EmbeddingRecord, Store, _make_engine, _url_from_path
 
 logger = logging.getLogger(__name__)
+
+
+class EmbeddingModelPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    name: str
+    description: Optional[str] = None
+    url: Optional[str] = None
+    version: str
 
 
 class EmbeddingPayload(BaseModel):
@@ -35,27 +45,46 @@ class EmbeddingPayload(BaseModel):
 
     id: str
     entity_id: str = Field(alias="entityId")
-    embedding_model: str = Field(alias="embeddingModel")
+    embedding_model_id: str = Field(alias="embeddingModelId")
+    embedding_model: EmbeddingModelPayload = Field(alias="embeddingModel")
     vector: list[float]
     dimensions: int
     properties: dict
     created_at: str = Field(alias="createdAt")
 
 
+class CreateEmbeddingModelPayload(BaseModel):
+    name: str
+    description: Optional[str] = None
+    url: Optional[str] = None
+    version: str
+
+
 class CreateEmbeddingPayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     entity_id: str = Field(alias="entityId")
+    embedding_model_id: str = Field(alias="embeddingModelId")
     vector: list[float]
-    embedding_model: str = Field(default="default", alias="embeddingModel")
     properties: Optional[dict] = None
+
+
+def _embedding_model_payload(record: EmbeddingModelRecord) -> EmbeddingModelPayload:
+    return EmbeddingModelPayload(
+        id=record.id,
+        name=record.name,
+        description=record.description,
+        url=record.url,
+        version=record.version,
+    )
 
 
 def _embedding_payload(record: EmbeddingRecord) -> EmbeddingPayload:
     return EmbeddingPayload(
         id=record.id,
         entity_id=record.entity_id,
-        embedding_model=record.embedding_model,
+        embedding_model_id=record.embedding_model_id,
+        embedding_model=_embedding_model_payload(record.embedding_model),
         vector=record.vector,
         dimensions=record.dimensions,
         properties=record.properties,
@@ -65,7 +94,13 @@ def _embedding_payload(record: EmbeddingRecord) -> EmbeddingPayload:
 
 def _embedding_error(exc: ValueError) -> HTTPException:
     message = str(exc)
-    status_code = status.HTTP_404_NOT_FOUND if "not found" in message.lower() else status.HTTP_400_BAD_REQUEST
+    lowered = message.lower()
+    if "not found" in lowered:
+        status_code = status.HTTP_404_NOT_FOUND
+    elif "still referenced" in lowered:
+        status_code = status.HTTP_409_CONFLICT
+    else:
+        status_code = status.HTTP_400_BAD_REQUEST
     return HTTPException(status_code=status_code, detail=message)
 
 
@@ -163,6 +198,67 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
         return {"status": "ok"}
 
     @app.post(
+        "/splash_links/embedding-models",
+        response_model=EmbeddingModelPayload,
+        status_code=status.HTTP_201_CREATED,
+        tags=["embeddings"],
+        summary="Create an embedding model",
+    )
+    def create_embedding_model(payload: CreateEmbeddingModelPayload, request: Request) -> EmbeddingModelPayload:
+        try:
+            record = request.app.state.store.create_embedding_model(
+                name=payload.name,
+                description=payload.description,
+                url=payload.url,
+                version=payload.version,
+            )
+        except ValueError as exc:
+            raise _embedding_error(exc) from exc
+        return _embedding_model_payload(record)
+
+    @app.get(
+        "/splash_links/embedding-models/{model_id}",
+        response_model=EmbeddingModelPayload,
+        tags=["embeddings"],
+        summary="Fetch one embedding model",
+    )
+    def get_embedding_model(model_id: str, request: Request) -> EmbeddingModelPayload:
+        record = request.app.state.store.get_embedding_model(model_id)
+        if record is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Embedding model not found")
+        return _embedding_model_payload(record)
+
+    @app.get(
+        "/splash_links/embedding-models",
+        response_model=list[EmbeddingModelPayload],
+        tags=["embeddings"],
+        summary="List embedding models",
+    )
+    def list_embedding_models(
+        request: Request,
+        name: Optional[str] = Query(None),
+        limit: int = Query(100, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
+    ) -> list[EmbeddingModelPayload]:
+        records = request.app.state.store.list_embedding_models(name=name, limit=limit, offset=offset)
+        return [_embedding_model_payload(record) for record in records]
+
+    @app.delete(
+        "/splash_links/embedding-models/{model_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        tags=["embeddings"],
+        summary="Delete one embedding model",
+    )
+    def delete_embedding_model(model_id: str, request: Request) -> Response:
+        try:
+            deleted = request.app.state.store.delete_embedding_model(model_id)
+        except ValueError as exc:
+            raise _embedding_error(exc) from exc
+        if not deleted:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Embedding model not found")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.post(
         "/splash_links/embeddings",
         response_model=EmbeddingPayload,
         status_code=status.HTTP_201_CREATED,
@@ -174,7 +270,7 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
             record = request.app.state.store.create_embedding(
                 entity_id=payload.entity_id,
                 vector=payload.vector,
-                embedding_model=payload.embedding_model,
+                embedding_model_id=payload.embedding_model_id,
                 properties=payload.properties,
             )
         except ValueError as exc:
@@ -202,13 +298,13 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
     def list_embeddings(
         request: Request,
         entity_id: Optional[str] = Query(None, alias="entityId"),
-        embedding_model: Optional[str] = Query(None, alias="embeddingModel"),
+        embedding_model_id: Optional[str] = Query(None, alias="embeddingModelId"),
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
     ) -> list[EmbeddingPayload]:
         records = request.app.state.store.list_embeddings(
             entity_id=entity_id,
-            embedding_model=embedding_model,
+            embedding_model_id=embedding_model_id,
             limit=limit,
             offset=offset,
         )
