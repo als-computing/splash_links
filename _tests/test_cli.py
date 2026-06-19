@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 import splash_links.cli as cli_module
 from splash_links.cli import app
-from splash_links.store import EmbeddingRecord, EntityRecord, LinkRecord
+from splash_links.store import EmbeddingModelRecord, EmbeddingRecord, EntityRecord, LinkRecord
 
 runner = CliRunner()
 
@@ -48,7 +48,14 @@ def _make_embedding(**kw) -> EmbeddingRecord:
     defaults = dict(
         id="emb-1",
         entity_id="ent-1",
-        embedding_model="model-a",
+        embedding_model_id="model-1",
+        embedding_model=EmbeddingModelRecord(
+            id="model-1",
+            name="model-a",
+            description=None,
+            url=None,
+            version="1",
+        ),
         vector=[0.1, 0.2, 0.3],
         dimensions=3,
         properties={},
@@ -72,12 +79,12 @@ class FakeStore:
     def find_links(self, subject_id=None, predicate=None, object_id=None, limit=50, offset=0):
         return self._links
 
-    def list_embeddings(self, entity_id=None, embedding_model=None, limit=50, offset=0):
+    def list_embeddings(self, entity_id=None, embedding_model_id=None, limit=50, offset=0):
         rows = self._embeddings
         if entity_id:
             rows = [embedding for embedding in rows if embedding.entity_id == entity_id]
-        if embedding_model:
-            rows = [embedding for embedding in rows if embedding.embedding_model == embedding_model]
+        if embedding_model_id:
+            rows = [embedding for embedding in rows if embedding.embedding_model_id == embedding_model_id]
         return rows
 
     def close(self):

@@ -47,12 +47,23 @@ class Link(BaseModel):
     created_at: str = Field(alias="createdAt")
 
 
+class EmbeddingModel(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    id: str
+    name: str
+    description: Optional[str] = None
+    url: Optional[str] = None
+    version: str
+
+
 class Embedding(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     id: str
     entity_id: str = Field(alias="entityId")
-    embedding_model: str = Field(alias="embeddingModel")
+    embedding_model_id: str = Field(alias="embeddingModelId")
+    embedding_model: EmbeddingModel = Field(alias="embeddingModel")
     vector: list[float]
     dimensions: int
     properties: Optional[dict]
@@ -72,7 +83,11 @@ class EmbeddingMatch(BaseModel):
 
 _ENTITY_FIELDS = "id entityType name uri properties createdAt"
 _LINK_FIELDS = "id subjectId predicate objectId properties createdAt"
-_EMBEDDING_FIELDS = "id entityId embeddingModel vector dimensions properties createdAt"
+_EMBEDDING_MODEL_FIELDS = "id name description url version"
+_EMBEDDING_FIELDS = (
+    "id entityId embeddingModelId vector dimensions properties createdAt "
+    f"embeddingModel {{ {_EMBEDDING_MODEL_FIELDS} }}"
+)
 
 _CREATE_ENTITY_MUTATION = f"""
 mutation CreateEntity($input: CreateEntityInput!) {{
@@ -98,10 +113,10 @@ query FindLinks($subjectId: ID, $objectId: ID, $predicate: String, $limit: Int, 
 """
 
 _NEAREST_EMBEDDINGS_QUERY = f"""
-query NearestEmbeddings($vector: [Float!]!, $embeddingModel: String, $entityId: ID, $limit: Int, $offset: Int) {{
+query NearestEmbeddings($vector: [Float!]!, $embeddingModelId: ID, $entityId: ID, $limit: Int, $offset: Int) {{
     nearestEmbeddings(
         vector: $vector
-        embeddingModel: $embeddingModel
+        embeddingModelId: $embeddingModelId
         entityId: $entityId
         limit: $limit
         offset: $offset
@@ -155,6 +170,7 @@ class LinksClient:
         self._base_url = base_url.rstrip("/")
         self._gql_url = self._base_url + "/splash_links/graphql"
         self._embeddings_url = self._base_url + "/splash_links/embeddings"
+        self._embedding_models_url = self._base_url + "/splash_links/embedding-models"
         # Cache: tiled node URI -> Entity, avoids duplicate entity creation
         self._tiled_cache: dict[str, Entity] = {}
 
@@ -283,7 +299,7 @@ class LinksClient:
         self,
         entity_id: Any,
         vector: list[float],
-        embedding_model: str = "default",
+        embedding_model_id: str,
         properties: Optional[dict] = None,
     ) -> Embedding:
         resolved_entity_id = self._resolve(entity_id)
@@ -291,8 +307,8 @@ class LinksClient:
             self._embeddings_url,
             json={
                 "entityId": resolved_entity_id,
+                "embeddingModelId": embedding_model_id,
                 "vector": vector,
-                "embeddingModel": embedding_model,
                 "properties": properties,
             },
             timeout=30.0,
@@ -300,10 +316,30 @@ class LinksClient:
         resp.raise_for_status()
         return _embedding_from_dict(resp.json())
 
+    def create_embedding_model(
+        self,
+        name: str,
+        version: str,
+        description: Optional[str] = None,
+        url: Optional[str] = None,
+    ) -> EmbeddingModel:
+        resp = httpx.post(
+            self._embedding_models_url,
+            json={
+                "name": name,
+                "version": version,
+                "description": description,
+                "url": url,
+            },
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        return EmbeddingModel.model_validate(resp.json())
+
     def find_nearest_embeddings(
         self,
         vector: list[float],
-        embedding_model: Optional[str] = None,
+        embedding_model_id: Optional[str] = None,
         entity_id: Optional[Any] = None,
         limit: int = 10,
         offset: int = 0,
@@ -312,7 +348,7 @@ class LinksClient:
             _NEAREST_EMBEDDINGS_QUERY,
             {
                 "vector": vector,
-                "embeddingModel": embedding_model,
+                "embeddingModelId": embedding_model_id,
                 "entityId": self._resolve(entity_id) if entity_id is not None else None,
                 "limit": limit,
                 "offset": offset,

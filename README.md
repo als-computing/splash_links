@@ -107,11 +107,19 @@ mutation {
 ### Create an embedding
 
 ```bash
+MODEL_ID=$(curl -X POST http://localhost:8080/splash_links/embedding-models \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "text-embedding-3-small",
+    "version": "1",
+    "description": "Example model metadata"
+  }' | jq -r '.id')
+
 curl -X POST http://localhost:8080/splash_links/embeddings \
   -H 'Content-Type: application/json' \
   -d '{
     "entityId": "<entity-id>",
-    "embeddingModel": "text-embedding-3-small",
+    "embeddingModelId": "'"$MODEL_ID"'",
     "vector": [0.12, -0.03, 0.88],
     "properties": {"chunk": 1}
   }'
@@ -125,13 +133,14 @@ Embedding CRUD uses REST. Nearest-neighbor search stays in GraphQL and uses cosi
 query {
   nearestEmbeddings(
     vector: [0.11, -0.02, 0.90]
-    embeddingModel: "text-embedding-3-small"
+    embeddingModelId: "<embedding-model-id>"
     limit: 5
   ) {
     distance
     embedding {
       id
       entityId
+      embeddingModel { name version }
       entity { name }
     }
   }
@@ -142,7 +151,8 @@ query {
 
 ```bash
 curl http://localhost:8080/splash_links/embeddings/<embedding-id>
-curl 'http://localhost:8080/splash_links/embeddings?entityId=<entity-id>&embeddingModel=text-embedding-3-small'
+curl 'http://localhost:8080/splash_links/embedding-models?name=text-embedding-3-small'
+curl 'http://localhost:8080/splash_links/embeddings?entityId=<entity-id>&embeddingModelId=<embedding-model-id>'
 curl -X DELETE http://localhost:8080/splash_links/embeddings/<embedding-id>
 ```
 
@@ -179,7 +189,7 @@ pixi run links -- --object  <entity-id>     # incoming to a node
 
 ```bash
 pixi run embeddings -- --entity <entity-id>
-splash-links embeddings --model text-embedding-3-small --limit 10
+splash-links embeddings --model-id <embedding-model-id> --limit 10
 ```
 
 ### Raw SQLite shell

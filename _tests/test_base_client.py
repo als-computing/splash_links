@@ -206,7 +206,14 @@ def test_create_embedding_posts_expected_payload(monkeypatch):
             {
                 "id": "emb-1",
                 "entityId": "ent-1",
-                "embeddingModel": "model-a",
+                "embeddingModelId": "model-1",
+                "embeddingModel": {
+                    "id": "model-1",
+                    "name": "model-a",
+                    "description": None,
+                    "url": None,
+                    "version": "1",
+                },
                 "vector": [0.1, 0.2, 0.3],
                 "dimensions": 3,
                 "properties": {"chunk": 1},
@@ -220,18 +227,56 @@ def test_create_embedding_posts_expected_payload(monkeypatch):
     embedding = client.create_embedding(
         entity_id="ent-1",
         vector=[0.1, 0.2, 0.3],
-        embedding_model="model-a",
+        embedding_model_id="model-1",
         properties={"chunk": 1},
     )
 
     assert embedding.id == "emb-1"
+    assert embedding.embedding_model.id == "model-1"
     assert seen["url"] == "http://api:8080/splash_links/embeddings"
     assert seen["timeout"] == 30.0
     assert seen["json"] == {
         "entityId": "ent-1",
+        "embeddingModelId": "model-1",
         "vector": [0.1, 0.2, 0.3],
-        "embeddingModel": "model-a",
         "properties": {"chunk": 1},
+    }
+
+
+def test_create_embedding_model_posts_expected_payload(monkeypatch):
+    seen: dict[str, object] = {}
+
+    def fake_post(url: str, json: dict, timeout: float):
+        seen["url"] = url
+        seen["json"] = json
+        seen["timeout"] = timeout
+        return FakeResponse(
+            {
+                "id": "model-1",
+                "name": "model-a",
+                "description": "Example model",
+                "url": "https://example.com/model-a",
+                "version": "1",
+            }
+        )
+
+    monkeypatch.setattr(base_module.httpx, "post", fake_post)
+
+    client = from_uri("splash://api:8080")
+    model = client.create_embedding_model(
+        name="model-a",
+        version="1",
+        description="Example model",
+        url="https://example.com/model-a",
+    )
+
+    assert model.id == "model-1"
+    assert seen["url"] == "http://api:8080/splash_links/embedding-models"
+    assert seen["json"] == {
+        "name": "model-a",
+        "version": "1",
+        "description": "Example model",
+        "url": "https://example.com/model-a",
     }
 
 
@@ -248,7 +293,14 @@ def test_find_nearest_embeddings_posts_expected_payload(monkeypatch):
                     "embedding": {
                         "id": "emb-1",
                         "entityId": "ent-1",
-                        "embeddingModel": "model-a",
+                        "embeddingModelId": "model-1",
+                        "embeddingModel": {
+                            "id": "model-1",
+                            "name": "model-a",
+                            "description": None,
+                            "url": None,
+                            "version": "1",
+                        },
                         "vector": [0.1, 0.2],
                         "dimensions": 2,
                         "properties": None,
@@ -263,7 +315,7 @@ def test_find_nearest_embeddings_posts_expected_payload(monkeypatch):
 
     matches = client.find_nearest_embeddings(
         vector=[0.1, 0.2],
-        embedding_model="model-a",
+        embedding_model_id="model-1",
         entity_id="ent-1",
         limit=5,
         offset=1,
@@ -276,7 +328,14 @@ def test_find_nearest_embeddings_posts_expected_payload(monkeypatch):
                 "embedding": {
                     "id": "emb-1",
                     "entityId": "ent-1",
-                    "embeddingModel": "model-a",
+                    "embeddingModelId": "model-1",
+                    "embeddingModel": {
+                        "id": "model-1",
+                        "name": "model-a",
+                        "description": None,
+                        "url": None,
+                        "version": "1",
+                    },
                     "vector": [0.1, 0.2],
                     "dimensions": 2,
                     "properties": None,
@@ -288,7 +347,7 @@ def test_find_nearest_embeddings_posts_expected_payload(monkeypatch):
     assert seen["query"] == base_module._NEAREST_EMBEDDINGS_QUERY
     assert seen["variables"] == {
         "vector": [0.1, 0.2],
-        "embeddingModel": "model-a",
+        "embeddingModelId": "model-1",
         "entityId": "ent-1",
         "limit": 5,
         "offset": 1,

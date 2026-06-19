@@ -25,7 +25,7 @@ import strawberry
 from strawberry.scalars import JSON as StrawberryJSON
 from strawberry.types import Info
 
-from .store import EmbeddingMatchRecord, EmbeddingRecord, EntityRecord, LinkRecord, Store
+from .store import EmbeddingMatchRecord, EmbeddingModelRecord, EmbeddingRecord, EntityRecord, LinkRecord, Store
 
 logger = logging.getLogger(__name__)
 
@@ -103,10 +103,20 @@ class Link:
 
 
 @strawberry.type
+class EmbeddingModel:
+    id: strawberry.ID
+    name: str
+    description: Optional[str]
+    url: Optional[str]
+    version: str
+
+
+@strawberry.type
 class Embedding:
     id: strawberry.ID
     entity_id: strawberry.ID
-    embedding_model: str
+    embedding_model_id: strawberry.ID
+    embedding_model: EmbeddingModel
     vector: list[float]
     dimensions: int
     properties: Optional[JSON]  # type: ignore[valid-type]
@@ -155,7 +165,14 @@ def _embedding_from_record(r: EmbeddingRecord) -> Embedding:
     return Embedding(
         id=strawberry.ID(r.id),
         entity_id=strawberry.ID(r.entity_id),
-        embedding_model=r.embedding_model,
+        embedding_model_id=strawberry.ID(r.embedding_model_id),
+        embedding_model=EmbeddingModel(
+            id=strawberry.ID(r.embedding_model.id),
+            name=r.embedding_model.name,
+            description=r.embedding_model.description,
+            url=r.embedding_model.url,
+            version=r.embedding_model.version,
+        ),
         vector=r.vector,
         dimensions=r.dimensions,
         properties=r.properties if r.properties else None,
@@ -255,14 +272,14 @@ class Query:
         self,
         info: Info,
         vector: list[float],
-        embedding_model: Optional[str] = None,
+        embedding_model_id: Optional[strawberry.ID] = None,
         entity_id: Optional[strawberry.ID] = None,
         limit: int = 10,
         offset: int = 0,
     ) -> list[EmbeddingMatch]:
         records = _store(info).find_nearest_embeddings(
             query_vector=vector,
-            embedding_model=embedding_model,
+            embedding_model_id=str(embedding_model_id) if embedding_model_id else None,
             entity_id=str(entity_id) if entity_id else None,
             limit=limit,
             offset=offset,
